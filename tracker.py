@@ -8,7 +8,7 @@ import io
 import requests
 
 # GitHub 환경변수(금고) 우선 사용, 로컬 실행 시 전달된 키 사용
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "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")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "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")
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
 YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
