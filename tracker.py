@@ -14,7 +14,6 @@ YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
 LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 
 DB_FILE = "tracker.db"
-# GitHub 배포용 index.html 및 로컬용 dashboard.html 동시 지원
 HTML_OUTPUT = "index.html"
 
 NOTION_HEADERS = {
@@ -110,7 +109,6 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
-# 타겟 채널 목록에서 '수집대상'과 '카피 벤치마킹' 정보 완벽 수집
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
@@ -142,7 +140,6 @@ def fetch_target_channels():
         next_cursor = res.get("next_cursor")
     return channels
 
-# 이슈 영상 조회 (날짜 제약 완전 해제, 노션 DB 등록 영상 100% 흡수)
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
@@ -160,21 +157,20 @@ def fetch_issue_videos(channel_meta_map):
     video_items = []
     now_kst = datetime.datetime.now(KST)
 
-    target_page_ids = set(channel_meta_map.keys())
     target_channel_names = {v["channel_name"]: page_id for page_id, v in channel_meta_map.items()}
 
     for page in pages:
         p = page.get("properties", {})
         v_url = p.get("영상 링크", {}).get("url")
-        up_date_str = p.get("업로드 일시", {}).get("date", {}).get("start")
+        up_date_str = p.get("업로드 일시", {}).get("date", {}).get("start") if p.get("업로드 일시", {}).get("date") else None
         title_list = p.get("영상 제목", {}).get("title", [])
         title = title_list[0].get("plain_text", "무제") if title_list else "무제"
         
         vid = extract_youtube_id(v_url)
         if not vid: continue
 
-        # 날짜 파싱 (실패해도 절대로 버리지 않음)
-        up_dt = now_kst
+        # 날짜 파싱 (기본값 설정)
+        up_dt = now_kst - datetime.timedelta(hours=24)
         if up_date_str:
             try:
                 clean_date = up_date_str.replace("Z", "+00:00")
@@ -187,9 +183,9 @@ def fetch_issue_videos(channel_meta_map):
                 else:
                     up_dt = up_dt.astimezone(KST)
             except Exception:
-                up_dt = now_kst
+                pass
 
-        # 1. Relation 기반 매칭
+        # 관계형 출처 채널 확인
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -197,7 +193,7 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 2. 텍스트 채널명 매칭 보정
+        # 텍스트 채널명 매칭 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -218,9 +214,6 @@ def fetch_issue_videos(channel_meta_map):
         
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        # [수집 목적 명확화]
-        # 타겟 채널 목록에서 '수집대상'이 체크되어 있으면 무조건 '일반 수집대상'
-        # '카피 벤치마킹'이 체크되어 있거나 직접 스크랩이면 '카피 벤치마킹'
         if matched_c_meta and matched_c_meta.get("is_target", False):
             purpose_val = "일반 수집대상"
         elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
@@ -244,7 +237,6 @@ def fetch_issue_videos(channel_meta_map):
             "purpose": purpose_val,
             "thumbnail": thumb
         })
-    print(f"✅ 노션 이슈 수집함에서 총 {len(video_items)}개 영상 확인 완료")
     return video_items
 
 def get_videos_details(video_ids):
@@ -510,9 +502,10 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 전체 보기가 기본으로 설정되어 수집된 영상이 바로 나타남 -->
+        <!-- 기본값을 '전체 보기'로 설정하여 DB에 있는 기존 영상이 100% 무조건 노출되도록 보장 -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="all" selected>전체 보기</option>
+            <option value="168">7일 (1주일) 이내</option>
             <option value="72">3일 (72H) 이내</option>
             <option value="48">2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
@@ -645,7 +638,7 @@ def generate_rich_dashboard(data):
                 return;
             }
 
-            const displayLimit = Math.min(filtered.length, 150);
+            const displayLimit = Math.min(filtered.length, 120);
 
             for (let index = 0; index < displayLimit; index++) {
                 const v = filtered[index];
@@ -775,9 +768,9 @@ def generate_rich_dashboard(data):
 
     final_html = html_template.replace("__NOW_STR__", now_str).replace("__LAST_UPDATE__", last_update).replace("__RAW_VIDEOS__", json_data)
 
-    # index.html(웹 호스팅용)과 dashboard.html(로컬 bat용)을 동시에 생성
-    with open("index.html", "w", encoding="utf-8") as f:
+    with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
         f.write(final_html)
+    # 로컬 호환성을 위해 dashboard.html도 함께 저장
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     print(f"✨ [대시보드 렌더링 완료] index.html 및 dashboard.html 생성 성공")
