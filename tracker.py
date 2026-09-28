@@ -1,11 +1,11 @@
 # ==============================================================================
-# YouTube Benchmarking Tracker v3.3 (최종 완성본)
-# - 노션 [수집대상] 체크 채널 -> '일반 수집대상' 100% 완벽 매핑
-# - 노션 [카피 벤치마킹] 체크 채널 -> '카피 벤치마킹' 완벽 매핑
+# YouTube Benchmarking Tracker v3.4
+# - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 필터 추가
+# - [수집대상] -> '일반 수집대상', [카피 벤치마킹] -> '카피 벤치마킹', [쇼츠 소재] -> '쇼츠 소재'
 # - 미체크 채널 -> '기타 수집' 분류 및 '전체 수집 목적'에서 모두 열람
-# - 무의미한 날짜, 숫자, 연도, 방송사(#MBC뉴스, #2026 등) 키워드 원천 차단
+# - 마우스 호버 시 짤린 전체 제목 툴팁 표시
+# - 10분 주기 대시보드 자동 새로고침 탑재
 # - YouTube API 403 할당량 초과 시 보조 키 자동 전환(Failover)
-# - 실시간 초침 시계 및 GitHub Secrets 보안 완비
 # ==============================================================================
 
 import os
@@ -31,7 +31,7 @@ if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
         pass
 
 if not NOTION_API_KEY:
-    NOTION_API_KEY = "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"
+    NOTION_API_KEY = "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"
 
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
@@ -138,7 +138,7 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
-# 타겟 채널 목록 전체 로드 (성공 파일의 완벽한 체크박스 파싱 유지)
+# 타겟 채널 목록 전체 로드 ([쇼츠 소재] 체크박스 포함)
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
@@ -157,19 +157,21 @@ def fetch_target_channels():
             
             is_copy = props.get("카피 벤치마킹", {}).get("checkbox", False)
             is_target = props.get("수집대상", {}).get("checkbox", False)
+            is_shorts_material = props.get("쇼츠 소재", {}).get("checkbox", False)  # [추가]
 
             channels[page_id] = {
                 "channel_name": c_name,
                 "subscribers": subs,
                 "political_bias": bias,
                 "is_copy": is_copy,
-                "is_target": is_target
+                "is_target": is_target,
+                "is_shorts_material": is_shorts_material
             }
         has_more = res.get("has_more", False)
         next_cursor = res.get("next_cursor")
     return channels
 
-# 최근 7일 영상 조회 및 3단계 수집 목적 매핑
+# 최근 7일 영상 조회 및 4단계 수집 목적 매핑
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
@@ -253,11 +255,14 @@ def fetch_issue_videos(channel_meta_map):
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        # [핵심 수집 목적 3단계 분류 정의]
-        # 1. 수집대상 체크된 채널의 영상 -> '일반 수집대상'
-        # 2. 카피 벤치마킹 체크되었거나 직접 스크랩한 영상 -> '카피 벤치마킹'
-        # 3. 둘 다 체크 안 된 채널(MBC, JTBC 등) -> '기타 수집'
-        if matched_c_meta and matched_c_meta.get("is_target", False):
+        # [수집 목적 4단계 분류 정의]
+        # 1. 쇼츠 소재 체크된 채널의 영상 -> '쇼츠 소재'
+        # 2. 수집대상 체크된 채널의 영상 -> '일반 수집대상'
+        # 3. 카피 벤치마킹 체크되었거나 직접 스크랩한 영상 -> '카피 벤치마킹'
+        # 4. 둘 다 체크 안 된 채널 -> '기타 수집'
+        if matched_c_meta and matched_c_meta.get("is_shorts_material", False):
+            purpose_val = "쇼츠 소재"
+        elif matched_c_meta and matched_c_meta.get("is_target", False):
             purpose_val = "일반 수집대상"
         elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
             purpose_val = "카피 벤치마킹"
@@ -350,7 +355,6 @@ def record_and_prepare_data(video_items, yt_stats):
         vid = item["video_id"]
         stats = yt_stats.get(vid)
         
-        # API 통계가 0이거나 누락된 경우 SQLite 과거 기록으로 Fallback 복구
         if not stats or stats.get("views", 0) == 0:
             if vid in last_views_map:
                 stats = last_views_map[vid]
@@ -455,7 +459,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드 v3.3</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.4</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -540,7 +544,7 @@ def generate_rich_dashboard(data):
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.3</span></h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.4</span></h1>
         <div class="header-meta">
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
             <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
@@ -555,7 +559,7 @@ def generate_rich_dashboard(data):
         </div>
         <div class="stats-summary">
             <div class="total">검색된 영상: <span id="filtered-count">0</span>개</div>
-            <div id="purpose-summary">전체 수집: 0개 | 일반 수집대상: 0개 | 카피 벤치마킹: 0개</div>
+            <div id="purpose-summary">전체: 0개 | 쇼츠 소재: 0개 | 일반: 0개 | 카피: 0개</div>
             <div id="format-summary">롱폼: 0개 | 쇼츠: 0개</div>
             <div id="bias-summary">성향별 []</div>
         </div>
@@ -570,8 +574,10 @@ def generate_rich_dashboard(data):
         <label class="checkbox-label"><input type="checkbox" id="exclude-major" onchange="renderCards()"> 🚫 대형 미디어 제외</label>
         <label class="checkbox-label"><input type="checkbox" id="burst-only" onchange="renderCards()"> 🚨 급상승 영상만</label>
         
+        <!-- [쇼츠 소재 추가] 전체 수집 목적 기본값 유지 -->
         <select id="filter-purpose" onchange="renderCards()">
             <option value="all" selected>전체 수집 목적</option>
+            <option value="쇼츠 소재">쇼츠 소재</option>
             <option value="일반 수집대상">일반 수집대상</option>
             <option value="카피 벤치마킹">카피 벤치마킹</option>
         </select>
@@ -582,6 +588,7 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
+        <!-- 전체 범위 7일(168H), 기본 선택값 2일(48H) -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
@@ -653,7 +660,7 @@ def generate_rich_dashboard(data):
         function updateKeywordTags(currentFiltered) {
             const excludeWords = new Set([
                 "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", 
-                "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기",
+                "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기", "전계완",
                 "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc", 
                 "채널a", "tv조선", "mbn", "연합뉴스", "조선일보", "동아일보", "중앙일보"
             ]);
@@ -727,8 +734,9 @@ def generate_rich_dashboard(data):
             });
 
             const total = filtered.length;
-            const copyCnt = filtered.filter(v => v.purpose === "카피 벤치마킹").length;
+            const shortsMatCnt = filtered.filter(v => v.purpose === "쇼츠 소재").length;
             const normalCnt = filtered.filter(v => v.purpose === "일반 수집대상").length;
+            const copyCnt = filtered.filter(v => v.purpose === "카피 벤치마킹").length;
             const longCnt = filtered.filter(v => v.format.includes("롱폼")).length;
             const shortCnt = filtered.filter(v => v.format.includes("쇼츠")).length;
 
@@ -740,7 +748,7 @@ def generate_rich_dashboard(data):
             const biasStr = Object.entries(biasObj).map(([k, v]) => `${k}: ${v}개`).join(" | ");
 
             document.getElementById("filtered-count").innerText = total;
-            document.getElementById("purpose-summary").innerText = `전체 수집: ${total}개 | 일반 수집대상: ${normalCnt}개 | 카피 벤치마킹: ${copyCnt}개`;
+            document.getElementById("purpose-summary").innerText = `전체: ${total}개 | 쇼츠 소재: ${shortsMatCnt}개 | 일반: ${normalCnt}개 | 카피: ${copyCnt}개`;
             document.getElementById("format-summary").innerText = `롱폼: ${longCnt}개 | 쇼츠: ${shortCnt}개`;
             document.getElementById("bias-summary").innerText = `성향별 [ ${biasStr} ]`;
 
@@ -750,7 +758,7 @@ def generate_rich_dashboard(data):
             container.innerHTML = "";
 
             if (filtered.length === 0) {
-                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다. (상단 수집 목적을 [전체 수집 목적]으로 변경해 보세요)</div>';
+                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다.</div>';
                 return;
             }
 
@@ -762,7 +770,6 @@ def generate_rich_dashboard(data):
                 const badgeClass = rank <= 3 ? "rank-top" : "rank-normal";
                 const chartId = "chart-" + v.video_id;
 
-                // [수정] 따옴표 깨짐 방지 및 hover 시 전체 제목 툴팁 표시
                 const safeTitle = (v.title || "").replace(/"/g, '&quot;');
 
                 let surgeHtml = "";
@@ -783,7 +790,6 @@ def generate_rich_dashboard(data):
                         <span class="duration-badge">${v.duration || v.format}</span>
                     </div>
                     <div class="card-body">
-                        <!-- 마우스 호버 시 title 속성으로 전체 원문 제목 표시 -->
                         <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title" title="${safeTitle}">${v.title}</a>
                         
                         <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
@@ -883,10 +889,11 @@ def generate_rich_dashboard(data):
 
         startLiveClock();
         renderCards();
-        // 10분(600,000 밀리초)마다 화면을 자동으로 새로고침하여 최신 배포 데이터를 반영합니다.
-setInterval(function() {
-    window.location.reload();
-}, 600000);
+
+        // [10분 주기 자동 새로고침]
+        setInterval(function() {
+            window.location.reload();
+        }, 600000);
     </script>
 </body>
 </html>"""
@@ -897,7 +904,7 @@ setInterval(function() {
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료 v3.3] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.4] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
