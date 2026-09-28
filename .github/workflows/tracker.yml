@@ -4,7 +4,7 @@ on:
   schedule:
     # 2시간마다 자동 실행
     - cron: '0 */2 * * *'
-  workflow_dispatch: # 수동 즉시 실행 지원
+  workflow_dispatch: # 수동 실행 지원
 
 permissions:
   contents: write
@@ -31,16 +31,16 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: 트래커 스크립트 실행
+      - name: 트래커 스크립트 실행 (최신 데이터 수집 및 index.html 생성)
         run: |
           python tracker.py
 
-      - name: 누적 DB 파일 GitHub에 커밋 및 저장
+      - name: 누적 DB 및 index.html 커밋 저장
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add tracker.db
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update tracker database"
+          git add tracker.db index.html dashboard.html
+          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update tracker database and dashboard"
           git push
         continue-on-error: true
 
