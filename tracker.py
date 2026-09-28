@@ -176,24 +176,22 @@ def fetch_issue_videos(channel_meta_map):
         vid = extract_youtube_id(v_url)
         if not vid or not up_date_str: continue
 
-        # 날짜 파싱 (KST 기준 정밀 계산)
+        # 날짜 파싱 (안전 처리)
         try:
-            if "T" in up_date_str:
-                up_dt = datetime.datetime.fromisoformat(up_date_str)
+            clean_date = up_date_str.replace("Z", "+00:00")
+            if "T" in clean_date:
+                up_dt = datetime.datetime.fromisoformat(clean_date)
             else:
-                up_dt = datetime.datetime.fromisoformat(up_date_str + "T00:00:00+09:00")
+                up_dt = datetime.datetime.fromisoformat(clean_date + "T00:00:00+09:00")
+            
             if up_dt.tzinfo is None:
                 up_dt = up_dt.replace(tzinfo=KST)
             else:
                 up_dt = up_dt.astimezone(KST)
         except Exception:
-            continue
+            up_dt = now_kst
 
-        # 14일 초과 영상만 제외 (충분한 기간 확보)
-        diff_days = (now_kst - up_dt).total_seconds() / 86400.0
-        if diff_days > 14:
-            continue
-
+        # 관계형 출처 채널 확인
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -201,6 +199,7 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
+        # 텍스트 채널명 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -221,6 +220,7 @@ def fetch_issue_videos(channel_meta_map):
         
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
+        # 수집 목적 판별
         if matched_c_meta and matched_c_meta.get("is_target", False):
             purpose_val = "일반 수집대상"
         elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
@@ -509,10 +509,11 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
+        <!-- 기본값을 '전체 기간 (14일)'로 지정하여 0개 노출 방지 -->
         <select id="filter-hours" onchange="renderCards()">
-            <option value="all">전체 기간 (14일)</option>
+            <option value="all" selected>전체 기간 (14일)</option>
             <option value="72">3일 (72H) 이내</option>
-            <option value="48" selected>2일 (48H) 이내</option>
+            <option value="48">2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
         </select>
 
@@ -775,7 +776,7 @@ def generate_rich_dashboard(data):
 
     with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [정밀 렌더링 완료] {os.path.abspath(HTML_OUTPUT)}")
+    print(f"✨ [렌더링 완료] {os.path.abspath(HTML_OUTPUT)}")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
