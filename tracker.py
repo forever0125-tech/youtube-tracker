@@ -883,6 +883,10 @@ def generate_rich_dashboard(data):
 
         startLiveClock();
         renderCards();
+        // 10분(600,000 밀리초)마다 화면을 자동으로 새로고침하여 최신 배포 데이터를 반영합니다.
+setInterval(function() {
+    window.location.reload();
+}, 600000);
     </script>
 </body>
 </html>"""
