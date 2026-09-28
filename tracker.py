@@ -682,7 +682,7 @@ def generate_rich_dashboard(data):
 
             const counts = {};
             words.forEach(w => { counts[w] = (counts[w] || 0) + 1; });
-            const sortedKws = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            const sortedKws = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 20);
 
             const kwContainer = document.getElementById("keywords-container");
             kwContainer.innerHTML = '<span>🔥 영상 핵심 키워드:</span>';
