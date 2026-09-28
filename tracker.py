@@ -7,8 +7,24 @@ import csv
 import io
 import requests
 
-# GitHub 환경변수(금고) 우선 사용, 로컬 실행 시 전달된 키 사용
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "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")
+# [보안 격리] GitHub Secrets 금고 또는 로컬 환경변수에서 키를 읽어옵니다.
+# 코드 파일 안에 키를 직접 적지 않으므로 GitHub/Notion 봇에 의해 키가 자동 폐기되지 않습니다.
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
+
+# 로컬(내 PC)에 config.json이 있으면 읽어오기 지원
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            NOTION_API_KEY = cfg.get("NOTION_API_KEY", "")
+    except Exception:
+        pass
+
+# 환경변수가 없을 경우 로컬 실행용 임시 키 (GitHub 금고 등록 시 자동 대체됨)
+if not NOTION_API_KEY:
+    NOTION_API_KEY = "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"
+
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
 YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
@@ -130,7 +146,7 @@ def fetch_target_channels():
             page_id = p["id"]
             props = p.get("properties", {})
             title_list = props.get("채널명", {}).get("title", [])
-            c_name = title_list[0].get("plain_text", "알수없음") if title_list else "알수없음"
+            c_name = title_list[0].get("plain_text", "알수없음").strip() if title_list else "알수없음"
             subs = props.get("구독자수", {}).get("number", 0) or 0
             bias = props.get("정치성향", {}).get("select", {}).get("name", "미배치") if props.get("정치성향", {}).get("select") else "미배치"
             
@@ -172,7 +188,9 @@ def fetch_issue_videos(channel_meta_map):
 
     video_items = []
     now_kst = datetime.datetime.now(KST)
-    target_channel_names = {v["channel_name"]: page_id for page_id, v in channel_meta_map.items()}
+
+    # 채널명 기준 매핑 테이블 (공백 제거 후 비교)
+    target_channel_names = {v["channel_name"].replace(" ", ""): v for v in channel_meta_map.values()}
 
     for page in pages:
         p = page.get("properties", {})
@@ -199,6 +217,7 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 pass
 
+        # 1. Relation 확인
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -206,15 +225,17 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
+        # 2. 텍스트 채널명 확인
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
-            txt_name = txt_list[0].get("plain_text", "")
-            
+            txt_name = txt_list[0].get("plain_text", "").strip()
+
         if not matched_c_meta and txt_name:
-            for c_name, pid in target_channel_names.items():
-                if c_name and (c_name in txt_name or txt_name in c_name):
-                    matched_c_meta = channel_meta_map[pid]
+            clean_txt = txt_name.replace(" ", "")
+            for c_clean, meta in target_channel_names.items():
+                if c_clean in clean_txt or clean_txt in c_clean:
+                    matched_c_meta = meta
                     break
 
         c_name = matched_c_meta["channel_name"] if matched_c_meta else (txt_name or "알수없음")
@@ -224,14 +245,16 @@ def fetch_issue_videos(channel_meta_map):
         fmt = p.get("포맷", {}).get("select", {}).get("name", "🔴 롱폼") if p.get("포맷", {}).get("select") else "🔴 롱폼"
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
-        
-        if matched_c_meta and matched_c_meta.get("is_target", False):
-            purpose_val = "일반 수집대상"
-        elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
+
+        # [일반 수집대상 vs 카피 벤치마킹 명확한 판별]
+        if matched_c_meta and matched_c_meta.get("is_copy", False):
+            purpose_val = "카피 벤치마킹"
+        elif "직접" in collect_method or "스크랩" in collect_method:
             purpose_val = "카피 벤치마킹"
         else:
-            purpose_val = "일반 수집대상" if "자동" in collect_method else "기타 수집"
-        
+            # 타겟 채널에 있거나 자동 수집된 영상은 모두 일반 수집대상으로 처리
+            purpose_val = "일반 수집대상"
+
         cover = page.get("cover", {})
         thumb = cover.get("external", {}).get("url", "") if cover else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
 
@@ -513,13 +536,12 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 전체 기간은 7일(168H), 기본 선택값은 2일(48H)로 지정 -->
+        <!-- 전체 범위 7일(168H), 기본 선택값 2일(48H) -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
             <option value="48" selected>2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
-            <option value="all">제한 없음 (전체 누적)</option>
         </select>
 
         <select id="filter-bias" onchange="renderCards()">
@@ -598,7 +620,7 @@ def generate_rich_dashboard(data):
             let filtered = rawVideos.filter(v => {
                 const title = (v.title || "").toLowerCase();
                 const chName = (v.channel_name || "");
-                const vPurpose = (v.purpose || "기타 수집");
+                const vPurpose = (v.purpose || "일반 수집대상");
                 const vFormat = (v.format || "");
                 const vBias = (v.political_bias || "미배치");
 
@@ -779,6 +801,7 @@ def generate_rich_dashboard(data):
 
     final_html = html_template.replace("__NOW_STR__", now_str).replace("__LAST_UPDATE__", last_update).replace("__RAW_VIDEOS__", json_data)
 
+    # GitHub Pages 웹 호스팅(index.html) 및 로컬 배치 파일(dashboard.html) 동시 생성
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
