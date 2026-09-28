@@ -90,8 +90,8 @@
     <div class="header">
         <h1>👑 정치1황 실시간 벤치마킹 대시보드</h1>
         <div class="header-meta">
-            <div class="live-time">현재 시간: 2026. 09. 28. 오전 09:31:21</div>
-            <div>마지막 업데이트: 2026-09-28 09:31:21 (0분 경과)</div>
+            <div class="live-time">현재 시간: 2026. 09. 28. 오전 10:06:20</div>
+            <div>마지막 업데이트: 2026-09-28 10:06:20 (0분 경과)</div>
         </div>
     </div>
 
@@ -130,13 +130,13 @@
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 기본값을 '전체 보기'로 설정하여 DB에 있는 기존 영상이 100% 무조건 노출되도록 보장 -->
+        <!-- 전체 기간은 7일(168H), 기본 선택값은 2일(48H)로 지정 -->
         <select id="filter-hours" onchange="renderCards()">
-            <option value="all" selected>전체 보기</option>
-            <option value="168">7일 (1주일) 이내</option>
+            <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
-            <option value="48">2일 (48H) 이내</option>
+            <option value="48" selected>2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
+            <option value="all">제한 없음 (전체 누적)</option>
         </select>
 
         <select id="filter-bias" onchange="renderCards()">
@@ -262,11 +262,11 @@
             container.innerHTML = "";
 
             if (filtered.length === 0) {
-                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다.</div>';
+                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다. (상단 기간 필터를 [전체 기간]으로 변경해 보세요)</div>';
                 return;
             }
 
-            const displayLimit = Math.min(filtered.length, 120);
+            const displayLimit = Math.min(filtered.length, 150);
 
             for (let index = 0; index < displayLimit; index++) {
                 const v = filtered[index];
