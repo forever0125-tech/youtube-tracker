@@ -2,7 +2,7 @@ name: YouTube Trend Auto Tracker
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 * * * *'  # 매시간 정시마다 자동 실행
   workflow_dispatch:
 
 permissions:
