@@ -7,22 +7,21 @@ import csv
 import io
 import requests
 
-NOTION_API_KEY = "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"
+# GitHub 환경변수(금고) 우선 사용, 로컬 실행 시 전달된 키 사용
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "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")
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
 YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
 LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 
 DB_FILE = "tracker.db"
-HTML_OUTPUT = "index.html"
+KST = datetime.timezone(datetime.timedelta(hours=9))
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_API_KEY}",
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json"
 }
-
-KST = datetime.timezone(datetime.timedelta(hours=9))
 
 def init_sqlite():
     conn = sqlite3.connect(DB_FILE)
@@ -114,11 +113,20 @@ def fetch_target_channels():
     channels = {}
     has_more = True
     next_cursor = None
+    
     while has_more:
-        payload = {"page_size": 100}
-        if next_cursor: payload["start_cursor"] = next_cursor
-        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
-        for p in res.get("results", []):
+        body = {"page_size": 100}
+        if next_cursor:
+            body["start_cursor"] = next_cursor
+            
+        res = requests.post(url, headers=NOTION_HEADERS, data=json.dumps(body))
+        data = res.json()
+        
+        if "results" not in data:
+            print(f"⚠️ 노션 타겟 채널 API 응답 에러: {data.get('message', res.text)}")
+            break
+            
+        for p in data.get("results", []):
             page_id = p["id"]
             props = p.get("properties", {})
             title_list = props.get("채널명", {}).get("title", [])
@@ -136,8 +144,8 @@ def fetch_target_channels():
                 "is_copy": is_copy,
                 "is_target": is_target
             }
-        has_more = res.get("has_more", False)
-        next_cursor = res.get("next_cursor")
+        has_more = data.get("has_more", False)
+        next_cursor = data.get("next_cursor")
     return channels
 
 def fetch_issue_videos(channel_meta_map):
@@ -147,16 +155,23 @@ def fetch_issue_videos(channel_meta_map):
     next_cursor = None
 
     while has_more:
-        payload = {"page_size": 100}
-        if next_cursor: payload["start_cursor"] = next_cursor
-        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
-        pages.extend(res.get("results", []))
-        has_more = res.get("has_more", False)
-        next_cursor = res.get("next_cursor")
+        body = {"page_size": 100}
+        if next_cursor:
+            body["start_cursor"] = next_cursor
+            
+        res = requests.post(url, headers=NOTION_HEADERS, data=json.dumps(body))
+        data = res.json()
+        
+        if "results" not in data:
+            print(f"⚠️ 노션 이슈 영상 API 응답 에러: {data.get('message', res.text)}")
+            break
+            
+        pages.extend(data.get("results", []))
+        has_more = data.get("has_more", False)
+        next_cursor = data.get("next_cursor")
 
     video_items = []
     now_kst = datetime.datetime.now(KST)
-
     target_channel_names = {v["channel_name"]: page_id for page_id, v in channel_meta_map.items()}
 
     for page in pages:
@@ -169,7 +184,6 @@ def fetch_issue_videos(channel_meta_map):
         vid = extract_youtube_id(v_url)
         if not vid: continue
 
-        # 날짜 파싱 (기본값 설정)
         up_dt = now_kst - datetime.timedelta(hours=24)
         if up_date_str:
             try:
@@ -185,7 +199,6 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 pass
 
-        # 관계형 출처 채널 확인
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -193,7 +206,6 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 텍스트 채널명 매칭 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -211,7 +223,6 @@ def fetch_issue_videos(channel_meta_map):
 
         fmt = p.get("포맷", {}).get("select", {}).get("name", "🔴 롱폼") if p.get("포맷", {}).get("select") else "🔴 롱폼"
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
-        
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
         if matched_c_meta and matched_c_meta.get("is_target", False):
@@ -502,13 +513,13 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 기본값을 '전체 보기'로 설정하여 DB에 있는 기존 영상이 100% 무조건 노출되도록 보장 -->
+        <!-- 전체 기간은 7일(168H), 기본 선택값은 2일(48H)로 지정 -->
         <select id="filter-hours" onchange="renderCards()">
-            <option value="all" selected>전체 보기</option>
-            <option value="168">7일 (1주일) 이내</option>
+            <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
-            <option value="48">2일 (48H) 이내</option>
+            <option value="48" selected>2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
+            <option value="all">제한 없음 (전체 누적)</option>
         </select>
 
         <select id="filter-bias" onchange="renderCards()">
@@ -634,11 +645,11 @@ def generate_rich_dashboard(data):
             container.innerHTML = "";
 
             if (filtered.length === 0) {
-                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다.</div>';
+                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다. (상단 기간 필터를 [전체 기간]으로 변경해 보세요)</div>';
                 return;
             }
 
-            const displayLimit = Math.min(filtered.length, 120);
+            const displayLimit = Math.min(filtered.length, 150);
 
             for (let index = 0; index < displayLimit; index++) {
                 const v = filtered[index];
@@ -768,9 +779,8 @@ def generate_rich_dashboard(data):
 
     final_html = html_template.replace("__NOW_STR__", now_str).replace("__LAST_UPDATE__", last_update).replace("__RAW_VIDEOS__", json_data)
 
-    with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
+    with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    # 로컬 호환성을 위해 dashboard.html도 함께 저장
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     print(f"✨ [대시보드 렌더링 완료] index.html 및 dashboard.html 생성 성공")
