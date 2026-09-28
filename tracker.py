@@ -273,19 +273,40 @@ def fetch_issue_videos(channel_meta_map):
         })
     return video_items
 
+import time
+
 def get_videos_details(video_ids):
     details = {}
+    if not video_ids:
+        return details
+
+    print(f"📥 유튜브 API에서 영상 {len(video_ids)}개의 실시간 통계 조회 중...")
+    
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i+50]
         url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={','.join(batch)}&key={YOUTUBE_API_KEY}"
-        res = requests.get(url).json()
-        for item in res.get("items", []):
-            st = item.get("statistics", {})
-            details[item["id"]] = {
-                "views": int(st.get("viewCount", 0)),
-                "likes": int(st.get("likeCount", 0)),
-                "comments": int(st.get("commentCount", 0))
-            }
+        
+        # 네트워크 끊김 방지용 3회 재시도 로직
+        for attempt in range(3):
+            try:
+                res = requests.get(url, timeout=15)
+                if res.status_code == 200:
+                    data = res.json()
+                    for item in data.get("items", []):
+                        st = item.get("statistics", {})
+                        details[item["id"]] = {
+                            "views": int(st.get("viewCount", 0)),
+                            "likes": int(st.get("likeCount", 0)),
+                            "comments": int(st.get("commentCount", 0))
+                        }
+                    break
+                else:
+                    time.sleep(1)
+            except Exception as e:
+                if attempt == 2:
+                    print(f"⚠️ 일부 영상 통계 조회 건너뜀 (네트워크 지연)")
+                time.sleep(1.5)
+                
     return details
 
 def record_and_prepare_data(video_items, yt_stats):
