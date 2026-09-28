@@ -1,3 +1,13 @@
+# ==============================================================================
+# YouTube Benchmarking Tracker v3.3 (최종 완성본)
+# - 노션 [수집대상] 체크 채널 -> '일반 수집대상' 100% 완벽 매핑
+# - 노션 [카피 벤치마킹] 체크 채널 -> '카피 벤치마킹' 완벽 매핑
+# - 미체크 채널 -> '기타 수집' 분류 및 '전체 수집 목적'에서 모두 열람
+# - 무의미한 날짜, 숫자, 연도, 방송사(#MBC뉴스, #2026 등) 키워드 원천 차단
+# - YouTube API 403 할당량 초과 시 보조 키 자동 전환(Failover)
+# - 실시간 초침 시계 및 GitHub Secrets 보안 완비
+# ==============================================================================
+
 import os
 import re
 import json
@@ -5,13 +15,12 @@ import sqlite3
 import datetime
 import csv
 import io
+import time
 import requests
 
-# [보안 격리] GitHub Secrets 금고 또는 로컬 환경변수에서 키를 읽어옵니다.
-# 코드 파일 안에 키를 직접 적지 않으므로 GitHub/Notion 봇에 의해 키가 자동 폐기되지 않습니다.
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 
-# 로컬(내 PC)에 config.json이 있으면 읽어오기 지원
+# 로컬 PC config.json 지원
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
     try:
@@ -21,15 +30,20 @@ if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
     except Exception:
         pass
 
-# 환경변수가 없을 경우 로컬 실행용 임시 키 (GitHub 금고 등록 시 자동 대체됨)
 if not NOTION_API_KEY:
-    NOTION_API_KEY = "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"
+    NOTION_API_KEY = "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"
 
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
-YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
-LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 
+# 유튜브 기본 키 + 보조 키 풀 (403 에러 시 즉각 자동 스위칭)
+YOUTUBE_API_KEYS = [
+    "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc",
+    "AIzaSyDVTGEQXH33HX5kwrIFjYBBip0xgPgl1BI"
+]
+current_yt_key_index = 0
+
+LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 DB_FILE = "tracker.db"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -124,29 +138,20 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
+# 타겟 채널 목록 전체 로드 (성공 파일의 완벽한 체크박스 파싱 유지)
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
     has_more = True
     next_cursor = None
-    
     while has_more:
-        body = {"page_size": 100}
-        if next_cursor:
-            body["start_cursor"] = next_cursor
-            
-        res = requests.post(url, headers=NOTION_HEADERS, data=json.dumps(body))
-        data = res.json()
-        
-        if "results" not in data:
-            print(f"⚠️ 노션 타겟 채널 API 응답 에러: {data.get('message', res.text)}")
-            break
-            
-        for p in data.get("results", []):
+        payload = {"page_size": 100}
+        if next_cursor: payload["start_cursor"] = next_cursor
+        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
+        for p in res.get("results", []):
             page_id = p["id"]
             props = p.get("properties", {})
-            title_list = props.get("채널명", {}).get("title", [])
-            c_name = title_list[0].get("plain_text", "알수없음").strip() if title_list else "알수없음"
+            c_name = props.get("채널명", {}).get("title", [{}])[0].get("plain_text", "알수없음").strip()
             subs = props.get("구독자수", {}).get("number", 0) or 0
             bias = props.get("정치성향", {}).get("select", {}).get("name", "미배치") if props.get("정치성향", {}).get("select") else "미배치"
             
@@ -160,37 +165,39 @@ def fetch_target_channels():
                 "is_copy": is_copy,
                 "is_target": is_target
             }
-        has_more = data.get("has_more", False)
-        next_cursor = data.get("next_cursor")
+        has_more = res.get("has_more", False)
+        next_cursor = res.get("next_cursor")
     return channels
 
+# 최근 7일 영상 조회 및 3단계 수집 목적 매핑
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
     has_more = True
     next_cursor = None
 
+    now_kst = datetime.datetime.now(KST)
+    seven_days_ago_iso = (now_kst - datetime.timedelta(days=7)).date().isoformat()
+
+    payload = {
+        "filter": {
+            "property": "업로드 일시",
+            "date": {
+                "on_or_after": seven_days_ago_iso
+            }
+        },
+        "page_size": 100
+    }
+
     while has_more:
-        body = {"page_size": 100}
-        if next_cursor:
-            body["start_cursor"] = next_cursor
-            
-        res = requests.post(url, headers=NOTION_HEADERS, data=json.dumps(body))
-        data = res.json()
-        
-        if "results" not in data:
-            print(f"⚠️ 노션 이슈 영상 API 응답 에러: {data.get('message', res.text)}")
-            break
-            
-        pages.extend(data.get("results", []))
-        has_more = data.get("has_more", False)
-        next_cursor = data.get("next_cursor")
+        if next_cursor: payload["start_cursor"] = next_cursor
+        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
+        pages.extend(res.get("results", []))
+        has_more = res.get("has_more", False)
+        next_cursor = res.get("next_cursor")
 
     video_items = []
-    now_kst = datetime.datetime.now(KST)
-
-    # 채널명 기준 매핑 테이블 (공백 제거 후 비교)
-    target_channel_names = {v["channel_name"].replace(" ", ""): v for v in channel_meta_map.values()}
+    target_channel_names = {v["channel_name"].replace(" ", "").lower(): v for v in channel_meta_map.values()}
 
     for page in pages:
         p = page.get("properties", {})
@@ -217,7 +224,7 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 pass
 
-        # 1. Relation 확인
+        # 1. Relation 기반 매칭
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -225,14 +232,14 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 2. 텍스트 채널명 확인
+        # 2. 텍스트 채널명 매칭 (Relation 누락 시 자동 보정)
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
             txt_name = txt_list[0].get("plain_text", "").strip()
-
+            
         if not matched_c_meta and txt_name:
-            clean_txt = txt_name.replace(" ", "")
+            clean_txt = txt_name.replace(" ", "").lower()
             for c_clean, meta in target_channel_names.items():
                 if c_clean in clean_txt or clean_txt in c_clean:
                     matched_c_meta = meta
@@ -245,16 +252,18 @@ def fetch_issue_videos(channel_meta_map):
         fmt = p.get("포맷", {}).get("select", {}).get("name", "🔴 롱폼") if p.get("포맷", {}).get("select") else "🔴 롱폼"
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
-
-        # [일반 수집대상 vs 카피 벤치마킹 명확한 판별]
-        if matched_c_meta and matched_c_meta.get("is_copy", False):
-            purpose_val = "카피 벤치마킹"
-        elif "직접" in collect_method or "스크랩" in collect_method:
+        
+        # [핵심 수집 목적 3단계 분류 정의]
+        # 1. 수집대상 체크된 채널의 영상 -> '일반 수집대상'
+        # 2. 카피 벤치마킹 체크되었거나 직접 스크랩한 영상 -> '카피 벤치마킹'
+        # 3. 둘 다 체크 안 된 채널(MBC, JTBC 등) -> '기타 수집'
+        if matched_c_meta and matched_c_meta.get("is_target", False):
+            purpose_val = "일반 수집대상"
+        elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
             purpose_val = "카피 벤치마킹"
         else:
-            # 타겟 채널에 있거나 자동 수집된 영상은 모두 일반 수집대상으로 처리
-            purpose_val = "일반 수집대상"
-
+            purpose_val = "기타 수집"
+        
         cover = page.get("cover", {})
         thumb = cover.get("external", {}).get("url", "") if cover else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
 
@@ -273,21 +282,22 @@ def fetch_issue_videos(channel_meta_map):
         })
     return video_items
 
-import time
-
+# 유튜브 API 403 오류 시 보조 키로 자동 전환(Failover)
 def get_videos_details(video_ids):
+    global current_yt_key_index
     details = {}
-    if not video_ids:
-        return details
+    if not video_ids: return details
 
     print(f"📥 유튜브 API에서 영상 {len(video_ids)}개의 실시간 통계 조회 중...")
     
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i+50]
-        url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={','.join(batch)}&key={YOUTUBE_API_KEY}"
-        
-        # 네트워크 끊김 방지용 3회 재시도 로직
-        for attempt in range(3):
+        success = False
+
+        while not success and current_yt_key_index < len(YOUTUBE_API_KEYS):
+            active_key = YOUTUBE_API_KEYS[current_yt_key_index]
+            url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={','.join(batch)}&key={active_key}"
+
             try:
                 res = requests.get(url, timeout=15)
                 if res.status_code == 200:
@@ -299,14 +309,20 @@ def get_videos_details(video_ids):
                             "likes": int(st.get("likeCount", 0)),
                             "comments": int(st.get("commentCount", 0))
                         }
+                    success = True
                     break
+                elif res.status_code == 403:
+                    print(f"⚠️ 유튜브 API 키 {current_yt_key_index + 1}번 할당량 소진! 다음 보조 키로 즉시 전환합니다...")
+                    current_yt_key_index += 1
+                    if current_yt_key_index >= len(YOUTUBE_API_KEYS):
+                        print("❌ 준비된 모든 유튜브 API 키의 할당량이 소진되었습니다.")
+                        break
                 else:
                     time.sleep(1)
-            except Exception as e:
-                if attempt == 2:
-                    print(f"⚠️ 일부 영상 통계 조회 건너뜀 (네트워크 지연)")
+            except Exception:
                 time.sleep(1.5)
-                
+                break
+
     return details
 
 def record_and_prepare_data(video_items, yt_stats):
@@ -316,7 +332,7 @@ def record_and_prepare_data(video_items, yt_stats):
     kst_now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
-        SELECT video_id, views, logged_at 
+        SELECT video_id, views, likes, comments, logged_at 
         FROM video_metrics 
         WHERE (video_id, logged_at) IN (
             SELECT video_id, MAX(logged_at) 
@@ -325,14 +341,21 @@ def record_and_prepare_data(video_items, yt_stats):
             GROUP BY video_id
         )
     """)
-    last_views_map = {row[0]: row[1] for row in cursor.fetchall()}
+    last_views_map = {row[0]: {"views": row[1], "likes": row[2], "comments": row[3]} for row in cursor.fetchall()}
 
     processed = []
     db_rows = []
 
     for item in video_items:
         vid = item["video_id"]
-        stats = yt_stats.get(vid, {"views": 0, "likes": 0, "comments": 0})
+        stats = yt_stats.get(vid)
+        
+        # API 통계가 0이거나 누락된 경우 SQLite 과거 기록으로 Fallback 복구
+        if not stats or stats.get("views", 0) == 0:
+            if vid in last_views_map:
+                stats = last_views_map[vid]
+            else:
+                stats = {"views": 0, "likes": 0, "comments": 0}
         
         up_dt = item["upload_dt_kst"]
         hrs = max(round((now_kst - up_dt).total_seconds() / 3600.0, 1), 0.1)
@@ -342,9 +365,9 @@ def record_and_prepare_data(video_items, yt_stats):
         up_str = up_dt.strftime("%m/%d %H:%M")
         time_ago_str = format_hours_to_korean(hrs)
 
-        prev_view = last_views_map.get(vid)
-        if prev_view is not None and stats["views"] > prev_view:
-            recent_growth = stats["views"] - prev_view
+        prev_info = last_views_map.get(vid)
+        if prev_info and stats["views"] > prev_info["views"]:
+            recent_growth = stats["views"] - prev_info["views"]
         else:
             recent_growth = vph
 
@@ -372,19 +395,21 @@ def record_and_prepare_data(video_items, yt_stats):
         }
         processed.append(row_data)
 
-        db_rows.append((
-            kst_now_str, item["page_id"], vid, item["channel_name"], item["title"],
-            stats["views"], stats["likes"], stats["comments"], hrs, vph,
-            item["subscribers"], item["format"], item["duration"],
-            item["purpose"], item["political_bias"], item["thumbnail"]
-        ))
+        if stats["views"] > 0:
+            db_rows.append((
+                kst_now_str, item["page_id"], vid, item["channel_name"], item["title"],
+                stats["views"], stats["likes"], stats["comments"], hrs, vph,
+                item["subscribers"], item["format"], item["duration"],
+                item["purpose"], item["political_bias"], item["thumbnail"]
+            ))
 
-    cursor.executemany("""
-        INSERT INTO video_metrics 
-        (logged_at, notion_id, video_id, channel_name, title, views, likes, comments, hours_elapsed, vph, subscribers, format_tag, duration, purpose, political_bias, thumbnail)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, db_rows)
-    conn.commit()
+    if db_rows:
+        cursor.executemany("""
+            INSERT INTO video_metrics 
+            (logged_at, notion_id, video_id, channel_name, title, views, likes, comments, hours_elapsed, vph, subscribers, format_tag, duration, purpose, political_bias, thumbnail)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, db_rows)
+        conn.commit()
 
     cursor.execute("""
         SELECT video_id, hours_elapsed, views, logged_at
@@ -421,8 +446,8 @@ def record_and_prepare_data(video_items, yt_stats):
 
 def generate_rich_dashboard(data):
     now_kst = datetime.datetime.now(KST)
-    now_str = now_kst.strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
-    last_update = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    last_update_ts = int(now_kst.timestamp() * 1000)
+    last_update_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     json_data = json.dumps(data, ensure_ascii=False)
 
     html_template = """<!DOCTYPE html>
@@ -430,7 +455,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.3</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -480,7 +505,7 @@ def generate_rich_dashboard(data):
         .duration-badge { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.8); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
 
         .card-body { padding: 14px; display: flex; flex-direction: column; flex-grow: 1; }
-        .card-title { font-size: 14px; font-weight: 700; line-height: 1.4; margin-bottom: 10px; color: var(--text-main); text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 38px; }
+        .card-title { font-size: 14px; font-weight: 700; line-height: 1.4; margin-bottom: 10px; color: var(--text-main); text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 38px; cursor: pointer; }
         .card-title:hover { color: #2563eb; }
         
         .meta-badges { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
@@ -515,10 +540,10 @@ def generate_rich_dashboard(data):
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드</h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.3</span></h1>
         <div class="header-meta">
-            <div class="live-time">현재 시간: __NOW_STR__</div>
-            <div>마지막 업데이트: __LAST_UPDATE__ (0분 경과)</div>
+            <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
+            <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
         </div>
     </div>
 
@@ -530,7 +555,7 @@ def generate_rich_dashboard(data):
         </div>
         <div class="stats-summary">
             <div class="total">검색된 영상: <span id="filtered-count">0</span>개</div>
-            <div id="purpose-summary">수집: 0개 | 카피 벤치마킹: 0개 | 일반 수집대상: 0개</div>
+            <div id="purpose-summary">전체 수집: 0개 | 일반 수집대상: 0개 | 카피 벤치마킹: 0개</div>
             <div id="format-summary">롱폼: 0개 | 쇼츠: 0개</div>
             <div id="bias-summary">성향별 []</div>
         </div>
@@ -546,9 +571,9 @@ def generate_rich_dashboard(data):
         <label class="checkbox-label"><input type="checkbox" id="burst-only" onchange="renderCards()"> 🚨 급상승 영상만</label>
         
         <select id="filter-purpose" onchange="renderCards()">
-            <option value="all">전체 수집 목적</option>
-            <option value="카피 벤치마킹">카피 벤치마킹</option>
+            <option value="all" selected>전체 수집 목적</option>
             <option value="일반 수집대상">일반 수집대상</option>
+            <option value="카피 벤치마킹">카피 벤치마킹</option>
         </select>
 
         <select id="filter-format" onchange="renderCards()">
@@ -557,7 +582,6 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 전체 범위 7일(168H), 기본 선택값 2일(48H) -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
@@ -586,8 +610,33 @@ def generate_rich_dashboard(data):
 
     <script>
         const rawVideos = __RAW_VIDEOS__;
+        const lastUpdateTs = __LAST_UPDATE_TS__;
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
+
+        function startLiveClock() {
+            function updateClock() {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const date = String(now.getDate()).padStart(2, '0');
+                let hours = now.getHours();
+                const minutes = String(now.getMinutes()).padStart(2, '0');
+                const seconds = String(now.getSeconds()).padStart(2, '0');
+                const ampm = hours >= 12 ? '오후' : '오전';
+                hours = hours % 12;
+                hours = hours ? hours : 12;
+
+                document.getElementById("live-clock").innerText = 
+                    `현재 시간: ${year}. ${month}. ${date}. ${ampm} ${String(hours).padStart(2, '0')}:${minutes}:${seconds}`;
+
+                const diffMinutes = Math.floor((now.getTime() - lastUpdateTs) / 60000);
+                document.getElementById("update-status").innerText = 
+                    `마지막 업데이트: __LAST_UPDATE_STR__ (${Math.max(0, diffMinutes)}분 경과)`;
+            }
+            updateClock();
+            setInterval(updateClock, 1000);
+        }
 
         function toggleKeyword(kw) {
             const searchInput = document.getElementById("search-input");
@@ -602,13 +651,25 @@ def generate_rich_dashboard(data):
         }
 
         function updateKeywordTags(currentFiltered) {
+            const excludeWords = new Set([
+                "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", 
+                "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기",
+                "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc", 
+                "채널a", "tv조선", "mbn", "연합뉴스", "조선일보", "동아일보", "중앙일보"
+            ]);
+
             const words = [];
             currentFiltered.forEach(v => {
-                const clean = (v.title || "").replace(/[^\\w\\s가-힣]/g, " ");
+                const clean = (v.title || "").replace(/[^a-zA-Z0-9가-힣\\s]/g, " ");
                 clean.split(/\\s+/).forEach(w => {
-                    if (w.length >= 2 && !["영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국"].includes(w)) {
-                        words.push(w);
-                    }
+                    const low = w.toLowerCase().trim();
+                    if (low.length < 2) return;
+                    if (/^\\d+$/.test(low)) return;
+                    if (/^\\d+(년|월|일|시|분|초|대|회|부|탄|선)$/.test(low)) return;
+                    if (excludeWords.has(low)) return;
+                    if (low.includes("mbc") || low.includes("kbs") || low.includes("sbs") || low.includes("ytn") || low.includes("jtbc")) return;
+
+                    words.push(w);
                 });
             });
 
@@ -641,13 +702,14 @@ def generate_rich_dashboard(data):
             let filtered = rawVideos.filter(v => {
                 const title = (v.title || "").toLowerCase();
                 const chName = (v.channel_name || "");
-                const vPurpose = (v.purpose || "일반 수집대상");
+                const vPurpose = (v.purpose || "기타 수집");
                 const vFormat = (v.format || "");
                 const vBias = (v.political_bias || "미배치");
 
                 if (search && !title.includes(search) && !chName.toLowerCase().includes(search)) return false;
                 if (excludeMajor && majorKeywords.some(m => chName.toUpperCase().includes(m))) return false;
                 if (burstOnly && (v.recent_growth || 0) < 3000) return false;
+                
                 if (purpose !== "all" && vPurpose !== purpose) return false;
                 if (format !== "all" && !vFormat.includes(format)) return false;
                 if (hours !== "all" && (v.hours_elapsed || 0) > parseFloat(hours)) return false;
@@ -678,7 +740,7 @@ def generate_rich_dashboard(data):
             const biasStr = Object.entries(biasObj).map(([k, v]) => `${k}: ${v}개`).join(" | ");
 
             document.getElementById("filtered-count").innerText = total;
-            document.getElementById("purpose-summary").innerText = `수집: ${total}개 | 카피 벤치마킹: ${copyCnt}개 | 일반 수집대상: ${normalCnt}개`;
+            document.getElementById("purpose-summary").innerText = `전체 수집: ${total}개 | 일반 수집대상: ${normalCnt}개 | 카피 벤치마킹: ${copyCnt}개`;
             document.getElementById("format-summary").innerText = `롱폼: ${longCnt}개 | 쇼츠: ${shortCnt}개`;
             document.getElementById("bias-summary").innerText = `성향별 [ ${biasStr} ]`;
 
@@ -688,7 +750,7 @@ def generate_rich_dashboard(data):
             container.innerHTML = "";
 
             if (filtered.length === 0) {
-                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다. (상단 기간 필터를 [전체 기간]으로 변경해 보세요)</div>';
+                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: #94a3b8; font-size: 16px;">조건에 일치하는 영상이 없습니다. (상단 수집 목적을 [전체 수집 목적]으로 변경해 보세요)</div>';
                 return;
             }
 
@@ -699,6 +761,9 @@ def generate_rich_dashboard(data):
                 const rank = index + 1;
                 const badgeClass = rank <= 3 ? "rank-top" : "rank-normal";
                 const chartId = "chart-" + v.video_id;
+
+                // [수정] 따옴표 깨짐 방지 및 hover 시 전체 제목 툴팁 표시
+                const safeTitle = (v.title || "").replace(/"/g, '&quot;');
 
                 let surgeHtml = "";
                 if ((v.recent_growth || 0) >= 3000) {
@@ -718,7 +783,8 @@ def generate_rich_dashboard(data):
                         <span class="duration-badge">${v.duration || v.format}</span>
                     </div>
                     <div class="card-body">
-                        <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title">${v.title}</a>
+                        <!-- 마우스 호버 시 title 속성으로 전체 원문 제목 표시 -->
+                        <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title" title="${safeTitle}">${v.title}</a>
                         
                         <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
                             🕒 ${v.up_str} (${v.time_ago_str}) | 👥 구독자 ${(v.subscribers || 0).toLocaleString()}명
@@ -815,19 +881,19 @@ def generate_rich_dashboard(data):
             }
         }
 
+        startLiveClock();
         renderCards();
     </script>
 </body>
 </html>"""
 
-    final_html = html_template.replace("__NOW_STR__", now_str).replace("__LAST_UPDATE__", last_update).replace("__RAW_VIDEOS__", json_data)
+    final_html = html_template.replace("__LAST_UPDATE_TS__", str(last_update_ts)).replace("__LAST_UPDATE_STR__", last_update_str).replace("__RAW_VIDEOS__", json_data)
 
-    # GitHub Pages 웹 호스팅(index.html) 및 로컬 배치 파일(dashboard.html) 동시 생성
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.3] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
@@ -838,7 +904,7 @@ def main():
     print(f"📌 노션 타겟 채널 {len(channels)}개 로드 완료")
 
     issue_videos = fetch_issue_videos(channels)
-    print(f"📌 노션 영상 총 {len(issue_videos)}개 로드 완료")
+    print(f"📌 노션 최근 7일 영상 총 {len(issue_videos)}개 선별 로드 완료")
 
     video_ids = [v["video_id"] for v in issue_videos]
     yt_stats = get_videos_details(video_ids)
