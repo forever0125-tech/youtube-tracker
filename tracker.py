@@ -5,7 +5,6 @@ import sqlite3
 import datetime
 import csv
 import io
-from collections import Counter
 import requests
 
 NOTION_API_KEY = "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"
@@ -58,15 +57,13 @@ def sync_history_from_google_sheet():
     total_logs = cursor.fetchone()[0]
 
     if total_logs < 200:
-        print("📥 구글 시트에서 1시간 단위 누적 로그를 동기화 중입니다...")
         csv_urls = [
             f"https://docs.google.com/spreadsheets/d/{LOG_SHEET_ID}/gviz/tq?tqx=out:csv",
             f"https://docs.google.com/spreadsheets/d/{LOG_SHEET_ID}/export?format=csv"
         ]
-        success = False
         for url in csv_urls:
             try:
-                res = requests.get(url, timeout=20)
+                res = requests.get(url, timeout=15)
                 if res.status_code == 200 and "html" not in res.headers.get("Content-Type", "").lower():
                     csv_text = res.content.decode("utf-8-sig", errors="ignore")
                     reader = csv.reader(io.StringIO(csv_text))
@@ -92,14 +89,9 @@ def sync_history_from_google_sheet():
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, rows_to_insert)
                         conn.commit()
-                        print(f"✅ 구글 시트 로그 {len(rows_to_insert):,}개 동기화 완료!")
-                        success = True
                         break
             except Exception:
                 continue
-
-        if not success:
-            print("⚠️ 구글 시트 동기화 스킵")
     conn.close()
 
 def extract_youtube_id(url):
@@ -174,22 +166,23 @@ def fetch_issue_videos(channel_meta_map):
         title = title_list[0].get("plain_text", "무제") if title_list else "무제"
         
         vid = extract_youtube_id(v_url)
-        if not vid or not up_date_str: continue
+        if not vid: continue
 
-        # 날짜 파싱 (안전 처리)
-        try:
-            clean_date = up_date_str.replace("Z", "+00:00")
-            if "T" in clean_date:
-                up_dt = datetime.datetime.fromisoformat(clean_date)
-            else:
-                up_dt = datetime.datetime.fromisoformat(clean_date + "T00:00:00+09:00")
-            
-            if up_dt.tzinfo is None:
-                up_dt = up_dt.replace(tzinfo=KST)
-            else:
-                up_dt = up_dt.astimezone(KST)
-        except Exception:
-            up_dt = now_kst
+        # 날짜 파싱 (실패해도 영상 버리지 않음)
+        up_dt = now_kst
+        if up_date_str:
+            try:
+                clean_date = up_date_str.replace("Z", "+00:00")
+                if "T" in clean_date:
+                    up_dt = datetime.datetime.fromisoformat(clean_date)
+                else:
+                    up_dt = datetime.datetime.fromisoformat(clean_date + "T00:00:00+09:00")
+                if up_dt.tzinfo is None:
+                    up_dt = up_dt.replace(tzinfo=KST)
+                else:
+                    up_dt = up_dt.astimezone(KST)
+            except Exception:
+                up_dt = now_kst
 
         # 관계형 출처 채널 확인
         rel_channels = p.get("출처 채널", {}).get("relation", [])
@@ -244,6 +237,7 @@ def fetch_issue_videos(channel_meta_map):
             "purpose": purpose_val,
             "thumbnail": thumb
         })
+    print(f"✅ 노션에서 가져온 총 영상 개수: {len(video_items)}개")
     return video_items
 
 def get_videos_details(video_ids):
@@ -509,9 +503,8 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 기본값을 '전체 기간 (14일)'로 지정하여 0개 노출 방지 -->
         <select id="filter-hours" onchange="renderCards()">
-            <option value="all" selected>전체 기간 (14일)</option>
+            <option value="all" selected>전체 보기</option>
             <option value="72">3일 (72H) 이내</option>
             <option value="48">2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
