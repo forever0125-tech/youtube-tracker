@@ -23,6 +23,8 @@ NOTION_HEADERS = {
     "Content-Type": "application/json"
 }
 
+KST = datetime.timezone(datetime.timedelta(hours=9))
+
 def init_sqlite():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -97,7 +99,7 @@ def sync_history_from_google_sheet():
                 continue
 
         if not success:
-            print("⚠️ 구글 시트 동기화 스킵 (공유 권한 확인 필요)")
+            print("⚠️ 구글 시트 동기화 스킵")
     conn.close()
 
 def extract_youtube_id(url):
@@ -160,8 +162,7 @@ def fetch_issue_videos(channel_meta_map):
         next_cursor = res.get("next_cursor")
 
     video_items = []
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    ten_days_limit = now_utc - datetime.timedelta(days=10)
+    now_kst = datetime.datetime.now(KST)
 
     target_channel_names = {v["channel_name"]: page_id for page_id, v in channel_meta_map.items()}
 
@@ -175,12 +176,23 @@ def fetch_issue_videos(channel_meta_map):
         vid = extract_youtube_id(v_url)
         if not vid or not up_date_str: continue
 
+        # 날짜 파싱 (KST 기준 정밀 계산)
         try:
-            up_dt = datetime.datetime.fromisoformat(up_date_str.replace("Z", "+00:00"))
-            if up_dt < ten_days_limit:
-                continue
+            if "T" in up_date_str:
+                up_dt = datetime.datetime.fromisoformat(up_date_str)
+            else:
+                up_dt = datetime.datetime.fromisoformat(up_date_str + "T00:00:00+09:00")
+            if up_dt.tzinfo is None:
+                up_dt = up_dt.replace(tzinfo=KST)
+            else:
+                up_dt = up_dt.astimezone(KST)
         except Exception:
-            pass
+            continue
+
+        # 14일 초과 영상만 제외 (충분한 기간 확보)
+        diff_days = (now_kst - up_dt).total_seconds() / 86400.0
+        if diff_days > 14:
+            continue
 
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
@@ -226,7 +238,7 @@ def fetch_issue_videos(channel_meta_map):
             "channel_name": c_name,
             "subscribers": subs,
             "political_bias": bias,
-            "upload_date": up_date_str,
+            "upload_dt_kst": up_dt,
             "format": fmt,
             "duration": dur,
             "purpose": purpose_val,
@@ -252,8 +264,8 @@ def get_videos_details(video_ids):
 def record_and_prepare_data(video_items, yt_stats):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    kst_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_kst = datetime.datetime.now(KST)
+    kst_now_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
         SELECT video_id, views, logged_at 
@@ -274,13 +286,12 @@ def record_and_prepare_data(video_items, yt_stats):
         vid = item["video_id"]
         stats = yt_stats.get(vid, {"views": 0, "likes": 0, "comments": 0})
         
-        up_dt = datetime.datetime.fromisoformat(item["upload_date"].replace("Z", "+00:00"))
-        hrs = max(round((now_utc - up_dt).total_seconds() / 3600.0, 1), 0.1)
+        up_dt = item["upload_dt_kst"]
+        hrs = max(round((now_kst - up_dt).total_seconds() / 3600.0, 1), 0.1)
         vph = round(stats["views"] / hrs)
         sub_rate = round((stats["views"] / item["subscribers"] * 100), 1) if item["subscribers"] > 0 else 0
 
-        kst_up = up_dt.astimezone(datetime.timezone(datetime.timedelta(hours=9)))
-        up_str = kst_up.strftime("%m/%d %H:%M")
+        up_str = up_dt.strftime("%m/%d %H:%M")
         time_ago_str = format_hours_to_korean(hrs)
 
         prev_view = last_views_map.get(vid)
@@ -290,7 +301,16 @@ def record_and_prepare_data(video_items, yt_stats):
             recent_growth = vph
 
         row_data = {
-            **item,
+            "page_id": item["page_id"],
+            "video_id": vid,
+            "title": item["title"],
+            "channel_name": item["channel_name"],
+            "subscribers": item["subscribers"],
+            "political_bias": item["political_bias"],
+            "format": item["format"],
+            "duration": item["duration"],
+            "purpose": item["purpose"],
+            "thumbnail": item["thumbnail"],
             "views": stats["views"],
             "likes": stats["likes"],
             "comments": stats["comments"],
@@ -300,12 +320,12 @@ def record_and_prepare_data(video_items, yt_stats):
             "recent_growth": recent_growth,
             "sub_rate": sub_rate,
             "up_str": up_str,
-            "logged_at": kst_now
+            "logged_at": kst_now_str
         }
         processed.append(row_data)
 
         db_rows.append((
-            kst_now, item["page_id"], vid, item["channel_name"], item["title"],
+            kst_now_str, item["page_id"], vid, item["channel_name"], item["title"],
             stats["views"], stats["likes"], stats["comments"], hrs, vph,
             item["subscribers"], item["format"], item["duration"],
             item["purpose"], item["political_bias"], item["thumbnail"]
@@ -352,8 +372,9 @@ def record_and_prepare_data(video_items, yt_stats):
     return processed
 
 def generate_rich_dashboard(data):
-    now_str = datetime.datetime.now().strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
-    last_update = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_kst = datetime.datetime.now(KST)
+    now_str = now_kst.strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
+    last_update = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     json_data = json.dumps(data, ensure_ascii=False)
 
     html_template = """<!DOCTYPE html>
@@ -489,7 +510,7 @@ def generate_rich_dashboard(data):
         </select>
 
         <select id="filter-hours" onchange="renderCards()">
-            <option value="all">전체 기간 (7일)</option>
+            <option value="all">전체 기간 (14일)</option>
             <option value="72">3일 (72H) 이내</option>
             <option value="48" selected>2일 (48H) 이내</option>
             <option value="24">1일 (24H) 이내</option>
@@ -754,7 +775,7 @@ def generate_rich_dashboard(data):
 
     with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [수집 목적 완벽 분리 대시보드 렌더링 완료] {os.path.abspath(HTML_OUTPUT)}")
+    print(f"✨ [정밀 렌더링 완료] {os.path.abspath(HTML_OUTPUT)}")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
@@ -765,7 +786,7 @@ def main():
     print(f"📌 노션에서 타겟 채널 {len(channels)}개 메타정보 로드 완료")
 
     issue_videos = fetch_issue_videos(channels)
-    print(f"📌 최근 영상 {len(issue_videos)}개 로드 완료")
+    print(f"📌 유효 영상 {len(issue_videos)}개 로드 완료")
 
     video_ids = [v["video_id"] for v in issue_videos]
     yt_stats = get_videos_details(video_ids)
