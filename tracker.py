@@ -23,7 +23,7 @@ if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
 
 # 환경변수가 없을 경우 로컬 실행용 임시 키 (GitHub 금고 등록 시 자동 대체됨)
 if not NOTION_API_KEY:
-    NOTION_API_KEY = "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"
+    NOTION_API_KEY = "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"
 
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
