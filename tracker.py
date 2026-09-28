@@ -14,6 +14,7 @@ YOUTUBE_API_KEY = "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc"
 LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 
 DB_FILE = "tracker.db"
+# GitHub 배포용 index.html 및 로컬용 dashboard.html 동시 지원
 HTML_OUTPUT = "index.html"
 
 NOTION_HEADERS = {
@@ -109,6 +110,7 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
+# 타겟 채널 목록에서 '수집대상'과 '카피 벤치마킹' 정보 완벽 수집
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
@@ -121,7 +123,8 @@ def fetch_target_channels():
         for p in res.get("results", []):
             page_id = p["id"]
             props = p.get("properties", {})
-            c_name = props.get("채널명", {}).get("title", [{}])[0].get("plain_text", "알수없음")
+            title_list = props.get("채널명", {}).get("title", [])
+            c_name = title_list[0].get("plain_text", "알수없음") if title_list else "알수없음"
             subs = props.get("구독자수", {}).get("number", 0) or 0
             bias = props.get("정치성향", {}).get("select", {}).get("name", "미배치") if props.get("정치성향", {}).get("select") else "미배치"
             
@@ -139,6 +142,7 @@ def fetch_target_channels():
         next_cursor = res.get("next_cursor")
     return channels
 
+# 이슈 영상 조회 (날짜 제약 완전 해제, 노션 DB 등록 영상 100% 흡수)
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
@@ -156,6 +160,7 @@ def fetch_issue_videos(channel_meta_map):
     video_items = []
     now_kst = datetime.datetime.now(KST)
 
+    target_page_ids = set(channel_meta_map.keys())
     target_channel_names = {v["channel_name"]: page_id for page_id, v in channel_meta_map.items()}
 
     for page in pages:
@@ -168,7 +173,7 @@ def fetch_issue_videos(channel_meta_map):
         vid = extract_youtube_id(v_url)
         if not vid: continue
 
-        # 날짜 파싱 (실패해도 영상 버리지 않음)
+        # 날짜 파싱 (실패해도 절대로 버리지 않음)
         up_dt = now_kst
         if up_date_str:
             try:
@@ -184,7 +189,7 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 up_dt = now_kst
 
-        # 관계형 출처 채널 확인
+        # 1. Relation 기반 매칭
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -192,7 +197,7 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 텍스트 채널명 보정
+        # 2. 텍스트 채널명 매칭 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -213,13 +218,15 @@ def fetch_issue_videos(channel_meta_map):
         
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        # 수집 목적 판별
+        # [수집 목적 명확화]
+        # 타겟 채널 목록에서 '수집대상'이 체크되어 있으면 무조건 '일반 수집대상'
+        # '카피 벤치마킹'이 체크되어 있거나 직접 스크랩이면 '카피 벤치마킹'
         if matched_c_meta and matched_c_meta.get("is_target", False):
             purpose_val = "일반 수집대상"
         elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
             purpose_val = "카피 벤치마킹"
         else:
-            purpose_val = "기타 수집"
+            purpose_val = "일반 수집대상" if "자동" in collect_method else "기타 수집"
         
         cover = page.get("cover", {})
         thumb = cover.get("external", {}).get("url", "") if cover else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
@@ -237,7 +244,7 @@ def fetch_issue_videos(channel_meta_map):
             "purpose": purpose_val,
             "thumbnail": thumb
         })
-    print(f"✅ 노션에서 가져온 총 영상 개수: {len(video_items)}개")
+    print(f"✅ 노션 이슈 수집함에서 총 {len(video_items)}개 영상 확인 완료")
     return video_items
 
 def get_videos_details(video_ids):
@@ -503,6 +510,7 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
+        <!-- 전체 보기가 기본으로 설정되어 수집된 영상이 바로 나타남 -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="all" selected>전체 보기</option>
             <option value="72">3일 (72H) 이내</option>
@@ -637,7 +645,7 @@ def generate_rich_dashboard(data):
                 return;
             }
 
-            const displayLimit = Math.min(filtered.length, 120);
+            const displayLimit = Math.min(filtered.length, 150);
 
             for (let index = 0; index < displayLimit; index++) {
                 const v = filtered[index];
@@ -767,9 +775,12 @@ def generate_rich_dashboard(data):
 
     final_html = html_template.replace("__NOW_STR__", now_str).replace("__LAST_UPDATE__", last_update).replace("__RAW_VIDEOS__", json_data)
 
-    with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
+    # index.html(웹 호스팅용)과 dashboard.html(로컬 bat용)을 동시에 생성
+    with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [렌더링 완료] {os.path.abspath(HTML_OUTPUT)}")
+    with open("dashboard.html", "w", encoding="utf-8") as f:
+        f.write(final_html)
+    print(f"✨ [대시보드 렌더링 완료] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
@@ -777,10 +788,10 @@ def main():
     sync_history_from_google_sheet()
     
     channels = fetch_target_channels()
-    print(f"📌 노션에서 타겟 채널 {len(channels)}개 메타정보 로드 완료")
+    print(f"📌 노션 타겟 채널 {len(channels)}개 로드 완료")
 
     issue_videos = fetch_issue_videos(channels)
-    print(f"📌 유효 영상 {len(issue_videos)}개 로드 완료")
+    print(f"📌 노션 영상 총 {len(issue_videos)}개 로드 완료")
 
     video_ids = [v["video_id"] for v in issue_videos]
     yt_stats = get_videos_details(video_ids)
