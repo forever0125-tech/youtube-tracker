@@ -618,6 +618,17 @@ def generate_rich_dashboard(data):
         const lastUpdateTs = __LAST_UPDATE_TS__;
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
+        let activeChannel = ""; // [추가] 선택된 채널명 저장 변수
+
+        // [채널 클릭 필터 및 해제 토글 함수]
+        function toggleChannelFilter(channelName) {
+            if (activeChannel === channelName) {
+                activeChannel = ""; // 이미 선택된 상태에서 다시 누르면 해제
+            } else {
+                activeChannel = channelName; // 해당 채널만 보기로 설정
+            }
+            renderCards();
+        }
 
         function startLiveClock() {
             function updateClock() {
@@ -729,6 +740,9 @@ def generate_rich_dashboard(data):
                 const vFormat = (v.format || "");
                 const vBias = (v.political_bias || "미배치");
 
+                // [추가] 채널명이 선택되어 있을 경우 정확히 일치하는 영상만 통과
+                if (activeChannel && chName !== activeChannel) return false;
+
                 if (search && !title.includes(search) && !chName.toLowerCase().includes(search)) return false;
                 if (excludeMajor && majorKeywords.some(m => chName.toUpperCase().includes(m))) return false;
                 if (burstOnly && (v.recent_growth || 0) < 3000) return false;
@@ -798,6 +812,12 @@ def generate_rich_dashboard(data):
                     `;
                 }
 
+                // 현재 선택된 채널인지 여부에 따라 활성 스타일 부여
+                const isChActive = (activeChannel === v.channel_name);
+                const chStyle = isChActive 
+                    ? "background: #2563eb; color: #ffffff; font-weight: 700; border: 1px solid #1d4ed8;" 
+                    : "";
+
                 const card = document.createElement("div");
                 card.className = "card";
                 card.innerHTML = `
@@ -814,7 +834,7 @@ def generate_rich_dashboard(data):
                         </div>
 
                         <div class="meta-badges">
-                            <span class="badge-chip chip-channel" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 이 채널만 보기 / 다시 클릭 시 전체 보기">📺 ${v.channel_name}</span>
+                            <span class="badge-chip chip-channel" style="${chStyle}" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 이 채널만 보기 / 다시 클릭 시 전체 보기">📺 ${v.channel_name}</span>
                             <span class="badge-chip chip-format">${v.format}</span>
                             <span class="badge-chip chip-bias">${v.political_bias}</span>
                         </div>
