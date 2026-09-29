@@ -674,7 +674,7 @@ def generate_rich_dashboard(data):
             const excludeWords = new Set([
                 "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", 
                 "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기","전계완", "기자",
-                "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc", 
+                "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc","생중계", "화면출처", 
                 "채널a", "tv조선", "mbn", "연합뉴스", "조선일보", "동아일보", "중앙일보",
                 "knn", "g1", "g1현장영상", "kbc", "tjb", "cjb", "ubc", "jtv", "ikbc"
             ]);
