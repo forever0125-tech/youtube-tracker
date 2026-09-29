@@ -614,8 +614,8 @@ def generate_rich_dashboard(data):
         </select>
 
         <select id="sort-order" onchange="renderCards()">
-            <option value="vph" selected>⚡ 시간당 조회수 순</option>
-            <option value="views">🔥 총 조회수 순</option>
+            <option value="vph">⚡ 시간당 조회수 순</option>
+            <option value="views" selected>🔥 총 조회수 순</option>
             <option value="sub_rate">📈 구독자 대비 비율 순</option>
             <option value="recent">🕒 최신 등록 순</option>
         </select>
