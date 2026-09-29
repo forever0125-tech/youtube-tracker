@@ -1,11 +1,10 @@
 # ==============================================================================
-# YouTube Benchmarking Tracker v3.4
-# - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 필터 추가
-# - [수집대상] -> '일반 수집대상', [카피 벤치마킹] -> '카피 벤치마킹', [쇼츠 소재] -> '쇼츠 소재'
-# - 미체크 채널 -> '기타 수집' 분류 및 '전체 수집 목적'에서 모두 열람
-# - 마우스 호버 시 짤린 전체 제목 툴팁 표시
-# - 10분 주기 대시보드 자동 새로고침 탑재
-# - YouTube API 403 할당량 초과 시 보조 키 자동 전환(Failover)
+# YouTube Benchmarking Tracker v3.5
+# - 상단 키워드 바 불필요 단어(KNN, G1, 기자 등) 제외 및 개수 확장(15개)
+# - 카드 내 [📺 채널명] 클릭 시 해당 채널 필터링 & 재클릭 시 해제(토글 기능)
+# - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 목적 필터 추가
+# - 10분 주기 대시보드 브라우저 자동 새로고침 탑재
+# - YouTube API 403 할당량 소진 시 보조 키 즉시 자동 전환(Failover)
 # ==============================================================================
 
 import os
@@ -31,12 +30,12 @@ if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
         pass
 
 if not NOTION_API_KEY:
-    NOTION_API_KEY = "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"
+    NOTION_API_KEY = "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"
 
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
 
-# 유튜브 기본 키 + 보조 키 풀 (403 에러 시 즉각 자동 스위칭)
+# 유튜브 기본 키 + 보조 키 풀 (403 에러 발생 시 자동 스위칭)
 YOUTUBE_API_KEYS = [
     "AIzaSyBFPe0eYPI99YfeH-P89OPJvUAMgOzXLKc",
     "AIzaSyDVTGEQXH33HX5kwrIFjYBBip0xgPgl1BI"
@@ -138,7 +137,7 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
-# 타겟 채널 목록 전체 로드 ([쇼츠 소재] 체크박스 포함)
+# 타겟 채널 목록 전체 로드 (쇼츠 소재 포함)
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
@@ -157,7 +156,7 @@ def fetch_target_channels():
             
             is_copy = props.get("카피 벤치마킹", {}).get("checkbox", False)
             is_target = props.get("수집대상", {}).get("checkbox", False)
-            is_shorts_material = props.get("쇼츠 소재", {}).get("checkbox", False)  # [추가]
+            is_shorts_material = props.get("쇼츠 소재", {}).get("checkbox", False)
 
             channels[page_id] = {
                 "channel_name": c_name,
@@ -171,7 +170,7 @@ def fetch_target_channels():
         next_cursor = res.get("next_cursor")
     return channels
 
-# 최근 7일 영상 조회 및 4단계 수집 목적 매핑
+# 최근 7일 영상 조회 및 수집 목적 4단계 매핑
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
@@ -226,7 +225,7 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 pass
 
-        # 1. Relation 기반 매칭
+        # 1. Relation 기반 채널 매칭
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -234,7 +233,7 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 2. 텍스트 채널명 매칭 (Relation 누락 시 자동 보정)
+        # 2. 텍스트 채널명 매칭 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -255,11 +254,7 @@ def fetch_issue_videos(channel_meta_map):
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        # [수집 목적 4단계 분류 정의]
-        # 1. 쇼츠 소재 체크된 채널의 영상 -> '쇼츠 소재'
-        # 2. 수집대상 체크된 채널의 영상 -> '일반 수집대상'
-        # 3. 카피 벤치마킹 체크되었거나 직접 스크랩한 영상 -> '카피 벤치마킹'
-        # 4. 둘 다 체크 안 된 채널 -> '기타 수집'
+        # 수집 목적 판별
         if matched_c_meta and matched_c_meta.get("is_shorts_material", False):
             purpose_val = "쇼츠 소재"
         elif matched_c_meta and matched_c_meta.get("is_target", False):
@@ -287,7 +282,7 @@ def fetch_issue_videos(channel_meta_map):
         })
     return video_items
 
-# 유튜브 API 403 오류 시 보조 키로 자동 전환(Failover)
+# 유튜브 API 403 시 보조 키 자동 스위칭(Failover)
 def get_videos_details(video_ids):
     global current_yt_key_index
     details = {}
@@ -317,7 +312,7 @@ def get_videos_details(video_ids):
                     success = True
                     break
                 elif res.status_code == 403:
-                    print(f"⚠️ 유튜브 API 키 {current_yt_key_index + 1}번 할당량 소진! 다음 보조 키로 즉시 전환합니다...")
+                    print(f"⚠️ 유튜브 API 키 {current_yt_key_index + 1}번 할당량 소진! 다음 보조 키로 즉각 전환합니다...")
                     current_yt_key_index += 1
                     if current_yt_key_index >= len(YOUTUBE_API_KEYS):
                         print("❌ 준비된 모든 유튜브 API 키의 할당량이 소진되었습니다.")
@@ -459,7 +454,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드 v3.4</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.5</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -514,7 +509,11 @@ def generate_rich_dashboard(data):
         
         .meta-badges { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
         .badge-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
-        .chip-channel { background: #eff6ff; color: #1d4ed8; }
+        
+        /* 채널명 클릭 버튼 효과 */
+        .chip-channel { background: #eff6ff; color: #1d4ed8; cursor: pointer; transition: all 0.2s; }
+        .chip-channel:hover { background: #1d4ed8; color: #ffffff; }
+
         .chip-format { background: #fee2e2; color: #b91c1c; }
         .chip-bias { background: #f1f5f9; color: #475569; }
 
@@ -544,7 +543,7 @@ def generate_rich_dashboard(data):
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.4</span></h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.5</span></h1>
         <div class="header-meta">
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
             <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
@@ -556,6 +555,7 @@ def generate_rich_dashboard(data):
             <div>🔥 <strong>시간당:</strong> 업로드 이후 1시간 평균 조회수 (확산 속도)</div>
             <div>📈 <strong>구독자 대비:</strong> 현재 조회수 ÷ 채널 구독자 수 비율 (100% 돌파 시 알고리즘 노출)</div>
             <div>🚨 <strong>급상승 알림:</strong> 최근 1시간 내 급격히 조회수가 폭등한 영상에 붉은색 알림이 점멸합니다.</div>
+            <div>💡 <strong>팁:</strong> 카드의 <strong>[📺 채널명]</strong>을 누르면 해당 채널의 영상만 모아볼 수 있습니다.</div>
         </div>
         <div class="stats-summary">
             <div class="total">검색된 영상: <span id="filtered-count">0</span>개</div>
@@ -570,11 +570,10 @@ def generate_rich_dashboard(data):
     </div>
 
     <div class="controls-bar">
-        <input type="text" id="search-input" class="search-box" placeholder="검색어 입력..." oninput="activeKeyword = ''; renderCards();">
+        <input type="text" id="search-input" class="search-box" placeholder="검색어 또는 채널명..." oninput="activeKeyword = ''; renderCards();">
         <label class="checkbox-label"><input type="checkbox" id="exclude-major" onchange="renderCards()"> 🚫 대형 미디어 제외</label>
         <label class="checkbox-label"><input type="checkbox" id="burst-only" onchange="renderCards()"> 🚨 급상승 영상만</label>
         
-        <!-- [쇼츠 소재 추가] 전체 수집 목적 기본값 유지 -->
         <select id="filter-purpose" onchange="renderCards()">
             <option value="all" selected>전체 수집 목적</option>
             <option value="쇼츠 소재">쇼츠 소재</option>
@@ -588,7 +587,6 @@ def generate_rich_dashboard(data):
             <option value="쇼츠">쇼츠</option>
         </select>
 
-        <!-- 전체 범위 7일(168H), 기본 선택값 2일(48H) -->
         <select id="filter-hours" onchange="renderCards()">
             <option value="168">전체 기간 (7일)</option>
             <option value="72">3일 (72H) 이내</option>
@@ -606,8 +604,8 @@ def generate_rich_dashboard(data):
         </select>
 
         <select id="sort-order" onchange="renderCards()">
-            <option value="vph">⚡ 시간당 조회수 순</option>
-            <option value="views" selected>🔥 총 조회수 순</option>
+            <option value="vph" selected>⚡ 시간당 조회수 순</option>
+            <option value="views">🔥 총 조회수 순</option>
             <option value="sub_rate">📈 구독자 대비 비율 순</option>
             <option value="recent">🕒 최신 등록 순</option>
         </select>
@@ -657,12 +655,28 @@ def generate_rich_dashboard(data):
             renderCards();
         }
 
+        // [채널명 클릭 필터 토글]
+        function toggleChannelFilter(channelName) {
+            const searchInput = document.getElementById("search-input");
+            const curVal = searchInput.value.trim();
+
+            if (curVal === channelName) {
+                searchInput.value = "";
+            } else {
+                searchInput.value = channelName;
+            }
+            activeKeyword = "";
+            renderCards();
+        }
+
         function updateKeywordTags(currentFiltered) {
+            // [제외 목록: 방송사, 지역방송, 불필요한 단어 완벽 차단]
             const excludeWords = new Set([
-                "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", "KNN", "G1현장영상",
-                "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기", "전계완", 
-                "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc", "생중계",
-                "채널a", "tv조선", "mbn", "연합뉴스", "조선일보", "동아일보", "중앙일보", "KNN", "G1현장영상"
+                "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", 
+                "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기","전계완", "기자",
+                "mbc", "mbc뉴스", "뉴스데스크", "kbs", "kbs뉴스", "sbs", "sbs뉴스", "ytn", "jtbc", 
+                "채널a", "tv조선", "mbn", "연합뉴스", "조선일보", "동아일보", "중앙일보",
+                "knn", "g1", "g1현장영상", "kbc", "tjb", "cjb", "ubc", "jtv", "ikbc"
             ]);
 
             const words = [];
@@ -674,7 +688,7 @@ def generate_rich_dashboard(data):
                     if (/^\\d+$/.test(low)) return;
                     if (/^\\d+(년|월|일|시|분|초|대|회|부|탄|선)$/.test(low)) return;
                     if (excludeWords.has(low)) return;
-                    if (low.includes("mbc") || low.includes("kbs") || low.includes("sbs") || low.includes("ytn") || low.includes("jtbc")) return;
+                    if (low.includes("mbc") || low.includes("kbs") || low.includes("sbs") || low.includes("ytn") || low.includes("jtbc") || low.includes("knn")) return;
 
                     words.push(w);
                 });
@@ -682,6 +696,8 @@ def generate_rich_dashboard(data):
 
             const counts = {};
             words.forEach(w => { counts[w] = (counts[w] || 0) + 1; });
+            
+            // 상위 15개 키워드로 표시
             const sortedKws = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 20);
 
             const kwContainer = document.getElementById("keywords-container");
@@ -771,6 +787,7 @@ def generate_rich_dashboard(data):
                 const chartId = "chart-" + v.video_id;
 
                 const safeTitle = (v.title || "").replace(/"/g, '&quot;');
+                const escapedChName = (v.channel_name || "").replace(/'/g, "\\'");
 
                 let surgeHtml = "";
                 if ((v.recent_growth || 0) >= 3000) {
@@ -797,7 +814,7 @@ def generate_rich_dashboard(data):
                         </div>
 
                         <div class="meta-badges">
-                            <span class="badge-chip chip-channel">📺 ${v.channel_name}</span>
+                            <span class="badge-chip chip-channel" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 이 채널만 보기 / 다시 클릭 시 전체 보기">📺 ${v.channel_name}</span>
                             <span class="badge-chip chip-format">${v.format}</span>
                             <span class="badge-chip chip-bias">${v.political_bias}</span>
                         </div>
@@ -890,7 +907,7 @@ def generate_rich_dashboard(data):
         startLiveClock();
         renderCards();
 
-        // [10분 주기 자동 새로고침]
+        // 10분 주기 자동 새로고침
         setInterval(function() {
             window.location.reload();
         }, 600000);
@@ -904,7 +921,7 @@ def generate_rich_dashboard(data):
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료 v3.4] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.5] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
