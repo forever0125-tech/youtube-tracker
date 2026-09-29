@@ -1,7 +1,7 @@
 # ==============================================================================
-# YouTube Benchmarking Tracker v3.6
-# - 상단 키워드 바 제외 목록 강화 (전계완, 생중계, 화면출처 등) 및 20개 노출 확장
-# - 카드 내 [📺 채널명] 클릭 시 해당 채널 영상만 100% 단독 필터링 & 재클릭 시 해제 (토글)
+# YouTube Benchmarking Tracker v3.7
+# - 카드 내 [📺 채널명] 클릭 시 검색창을 비우고 100% 채널 단위로만 단독 필터링
+# - 상단 키워드 바 제외 단어 강화(전계완, 생중계, 화면출처 등) 및 20개 노출 확장
 # - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 목적 필터 탑재
 # - 10분 주기 대시보드 브라우저 자동 새로고침 탑재
 # - YouTube API 403 소진 시 보조 키 자동 전환(Failover)
@@ -137,7 +137,6 @@ def format_hours_to_korean(hours_float):
         return f"{h}시간 전"
     return f"{h}시간 {m}분 전"
 
-# 타겟 채널 목록 전체 로드 (쇼츠 소재 포함)
 def fetch_target_channels():
     url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
@@ -170,7 +169,6 @@ def fetch_target_channels():
         next_cursor = res.get("next_cursor")
     return channels
 
-# 최근 7일 영상 조회 및 4단계 수집 목적 매핑
 def fetch_issue_videos(channel_meta_map):
     url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
@@ -225,7 +223,6 @@ def fetch_issue_videos(channel_meta_map):
             except Exception:
                 pass
 
-        # 1. Relation 기반 매칭
         rel_channels = p.get("출처 채널", {}).get("relation", [])
         matched_c_meta = None
         if rel_channels:
@@ -233,7 +230,6 @@ def fetch_issue_videos(channel_meta_map):
             if rel_id in channel_meta_map:
                 matched_c_meta = channel_meta_map[rel_id]
 
-        # 2. 텍스트 채널명 매칭 보정
         txt_name = ""
         txt_list = p.get("수집 채널명", {}).get("rich_text", [])
         if txt_list:
@@ -254,7 +250,6 @@ def fetch_issue_videos(channel_meta_map):
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        # 4단계 목적 분류
         if matched_c_meta and matched_c_meta.get("is_shorts_material", False):
             purpose_val = "쇼츠 소재"
         elif matched_c_meta and matched_c_meta.get("is_target", False):
@@ -282,7 +277,6 @@ def fetch_issue_videos(channel_meta_map):
         })
     return video_items
 
-# 유튜브 API 403 오류 시 보조 키로 자동 전환(Failover)
 def get_videos_details(video_ids):
     global current_yt_key_index
     details = {}
@@ -454,7 +448,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드 v3.6</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.7</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -491,20 +485,20 @@ def generate_rich_dashboard(data):
         .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-main); }
 
         .active-filter-badge {
-            background: #dbeafe;
-            color: #1e40af;
+            background: #2563eb;
+            color: #ffffff;
             font-size: 12px;
             font-weight: 700;
-            padding: 5px 12px;
+            padding: 6px 12px;
             border-radius: 6px;
             display: inline-flex;
             align-items: center;
             gap: 6px;
             cursor: pointer;
-            border: 1px solid #93c5fd;
+            box-shadow: 0 2px 4px rgba(37,99,235,0.2);
         }
         .active-filter-badge:hover {
-            background: #bfdbfe;
+            background: #1d4ed8;
         }
 
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
@@ -527,7 +521,6 @@ def generate_rich_dashboard(data):
         .meta-badges { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
         .badge-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
         
-        /* 채널명 버튼 커서 효과 */
         .chip-channel { background: #eff6ff; color: #1d4ed8; cursor: pointer; transition: all 0.2s; border: 1px solid #dbeafe; }
         .chip-channel:hover { background: #2563eb; color: #ffffff; border-color: #1d4ed8; }
 
@@ -560,7 +553,7 @@ def generate_rich_dashboard(data):
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.6</span></h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.7</span></h1>
         <div class="header-meta">
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
             <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
@@ -572,7 +565,7 @@ def generate_rich_dashboard(data):
             <div>🔥 <strong>시간당:</strong> 업로드 이후 1시간 평균 조회수 (확산 속도)</div>
             <div>📈 <strong>구독자 대비:</strong> 현재 조회수 ÷ 채널 구독자 수 비율 (100% 돌파 시 알고리즘 노출)</div>
             <div>🚨 <strong>급상승 알림:</strong> 최근 1시간 내 급격히 조회수가 폭등한 영상에 붉은색 알림이 점멸합니다.</div>
-            <div>💡 <strong>팁:</strong> 카드의 <strong>[📺 채널명]</strong>을 누르면 해당 채널의 영상만 모아볼 수 있습니다.</div>
+            <div>💡 <strong>팁:</strong> 카드의 <strong>[📺 채널명]</strong>을 누르면 해당 채널의 영상만 즉시 모아볼 수 있습니다.</div>
         </div>
         <div class="stats-summary">
             <div class="total">검색된 영상: <span id="filtered-count">0</span>개</div>
@@ -587,7 +580,7 @@ def generate_rich_dashboard(data):
     </div>
 
     <div class="controls-bar">
-        <input type="text" id="search-input" class="search-box" placeholder="검색어 입력..." oninput="activeKeyword = ''; renderCards();">
+        <input type="text" id="search-input" class="search-box" placeholder="검색어 입력..." oninput="activeKeyword = ''; activeChannel = ''; renderCards();">
         <label class="checkbox-label"><input type="checkbox" id="exclude-major" onchange="renderCards()"> 🚫 대형 미디어 제외</label>
         <label class="checkbox-label"><input type="checkbox" id="burst-only" onchange="renderCards()"> 🚨 급상승 영상만</label>
         
@@ -637,7 +630,7 @@ def generate_rich_dashboard(data):
         const lastUpdateTs = __LAST_UPDATE_TS__;
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
-        let activeChannel = ""; // 전용 채널 필터 변수
+        let activeChannel = ""; 
 
         function startLiveClock() {
             function updateClock() {
@@ -665,6 +658,7 @@ def generate_rich_dashboard(data):
 
         function toggleKeyword(kw) {
             const searchInput = document.getElementById("search-input");
+            activeChannel = ""; 
             if (activeKeyword === kw) {
                 activeKeyword = "";
                 searchInput.value = "";
@@ -675,8 +669,10 @@ def generate_rich_dashboard(data):
             renderCards();
         }
 
-        // [채널명 클릭 토글 함수: 정확 일치 매칭]
         function toggleChannelFilter(channelName) {
+            document.getElementById("search-input").value = "";
+            activeKeyword = "";
+
             if (activeChannel === channelName) {
                 activeChannel = "";
             } else {
@@ -686,7 +682,6 @@ def generate_rich_dashboard(data):
         }
 
         function updateKeywordTags(currentFiltered) {
-            // [제외 키워드: 방송사, 지역방송, 불필요 인명/단어 차단]
             const excludeWords = new Set([
                 "영상", "뉴스", "오늘", "속보", "논란", "단독", "풀영상", "이유", "결국", "충격", "진짜", 
                 "누구", "모두", "어제", "내일", "지금", "방송", "라이브", "live", "다시보기", "전계완", "기자",
@@ -713,7 +708,6 @@ def generate_rich_dashboard(data):
             const counts = {};
             words.forEach(w => { counts[w] = (counts[w] || 0) + 1; });
             
-            // 키워드 20개 노출
             const sortedKws = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 20);
 
             const kwContainer = document.getElementById("keywords-container");
@@ -738,7 +732,6 @@ def generate_rich_dashboard(data):
             const bias = document.getElementById("filter-bias").value;
             const sortOrder = document.getElementById("sort-order").value;
 
-            // 채널 필터 알림 뱃지 업데이트
             const chTagBox = document.getElementById("channel-filter-tag");
             if (activeChannel) {
                 chTagBox.style.display = "inline-flex";
@@ -756,10 +749,13 @@ def generate_rich_dashboard(data):
                 const vFormat = (v.format || "");
                 const vBias = (v.political_bias || "미배치");
 
-                // 채널 필터 선택 시 완벽 일치 비교
-                if (activeChannel && chName !== activeChannel) return false;
+                // 채널 필터 우선 검사 (순수 채널명 일치만 통과)
+                if (activeChannel) {
+                    if (chName !== activeChannel) return false;
+                } else if (search) {
+                    if (!title.includes(search) && !chName.toLowerCase().includes(search)) return false;
+                }
 
-                if (search && !title.includes(search) && !chName.toLowerCase().includes(search)) return false;
                 if (excludeMajor && majorKeywords.some(m => chName.toUpperCase().includes(m))) return false;
                 if (burstOnly && (v.recent_growth || 0) < 3000) return false;
                 
@@ -849,7 +845,7 @@ def generate_rich_dashboard(data):
                         </div>
 
                         <div class="meta-badges">
-                            <span class="badge-chip chip-channel" style="${chActiveStyle}" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 '${v.channel_name}' 영상만 모아보기">📺 ${v.channel_name}</span>
+                            <span class="badge-chip chip-channel" style="${chActiveStyle}" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 '${v.channel_name}' 채널 영상만 모아보기">📺 ${v.channel_name}</span>
                             <span class="badge-chip chip-format">${v.format}</span>
                             <span class="badge-chip chip-bias">${v.political_bias}</span>
                         </div>
@@ -942,7 +938,6 @@ def generate_rich_dashboard(data):
         startLiveClock();
         renderCards();
 
-        // 10분 주기 자동 새로고침
         setInterval(function() {
             window.location.reload();
         }, 600000);
@@ -956,7 +951,7 @@ def generate_rich_dashboard(data):
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료 v3.6] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.7] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
