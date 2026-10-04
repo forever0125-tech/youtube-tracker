@@ -1,0 +1,6 @@
+config.json
+tracker_db.js
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc

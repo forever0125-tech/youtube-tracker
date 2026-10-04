@@ -38,12 +38,19 @@ jobs:
 
       - name: 수집된 누적 DB 및 대시보드 저장
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          limit = 95 * 1024 * 1024
+          files = [Path('tracker.db'), Path('index.html'), Path('dashboard.html')]
+          too_large = [f for f in files if f.exists() and f.stat().st_size > limit]
+          if too_large:
+              raise SystemExit('저장 중단: 95MB 초과 파일 ' + ', '.join(str(f) for f in too_large))
+          PY
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add tracker.db index.html dashboard.html
           git diff --staged --quiet || git commit -m "Auto-update tracker database and dashboard"
           git push
-        continue-on-error: true
 
       - name: Pages 배포 설정
         uses: actions/configure-pages@v4

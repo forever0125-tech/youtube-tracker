@@ -44,6 +44,7 @@ current_yt_key_index = 0
 
 LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 DB_FILE = "tracker.db"
+MAX_HISTORY_BUCKETS_PER_VIDEO = 24
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 NOTION_HEADERS = {
@@ -75,8 +76,39 @@ def init_sqlite():
             thumbnail TEXT
         )
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_video_time ON video_metrics(video_id, logged_at)")
     conn.commit()
     conn.close()
+
+def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
+    """Keep one sample per elapsed-hour bucket and only the newest buckets per video."""
+    cursor = conn.cursor()
+    before = cursor.execute("SELECT COUNT(*) FROM video_metrics").fetchone()[0]
+    cursor.execute("""
+        DELETE FROM video_metrics
+        WHERE rowid NOT IN (
+            SELECT rowid FROM (
+                SELECT
+                    rowid,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY video_id, CAST(ROUND(hours_elapsed) AS INTEGER)
+                        ORDER BY logged_at DESC, rowid DESC
+                    ) AS duplicate_rank,
+                    DENSE_RANK() OVER (
+                        PARTITION BY video_id
+                        ORDER BY CAST(ROUND(hours_elapsed) AS INTEGER) DESC
+                    ) AS bucket_rank
+                FROM video_metrics
+            )
+            WHERE duplicate_rank = 1 AND bucket_rank <= ?
+        )
+    """, (buckets_per_video,))
+    conn.commit()
+    after = cursor.execute("SELECT COUNT(*) FROM video_metrics").fetchone()[0]
+    deleted = before - after
+    if deleted:
+        conn.execute("VACUUM")
+    print(f"🧹 [DB 자동 정리] {deleted:,}개 중복/과거 기록 제거 · {after:,}개 유지")
 
 def sync_history_from_google_sheet():
     conn = sqlite3.connect(DB_FILE)
@@ -403,6 +435,8 @@ def record_and_prepare_data(video_items, yt_stats):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, db_rows)
         conn.commit()
+
+    compact_history(conn)
 
     cursor.execute("""
         SELECT video_id, hours_elapsed, views, logged_at
