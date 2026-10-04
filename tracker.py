@@ -1,5 +1,5 @@
 # ==============================================================================
-# YouTube Benchmarking Tracker v3.8
+# YouTube Benchmarking Tracker v3.9
 # - 카드 내 [📺 채널명] 클릭 시 검색창을 비우고 100% 채널 단위로만 단독 필터링
 # - 상단 키워드 바 제외 단어 강화(전계완, 생중계, 화면출처 등) 및 20개 노출 확장
 # - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 목적 필터 탑재
@@ -82,7 +82,7 @@ def init_sqlite():
     conn.close()
 
 def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
-    """Bound DB growth; the dashboard only serves videos collected in the recent seven days."""
+    """Keep the latest real collection times, including irregular scheduled/manual runs."""
     cursor = conn.cursor()
     before = cursor.execute("SELECT COUNT(*) FROM video_metrics").fetchone()[0]
     cutoff = (datetime.datetime.now(KST) - datetime.timedelta(days=DETAILED_HISTORY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
@@ -94,12 +94,12 @@ def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
                 SELECT
                     rowid,
                     ROW_NUMBER() OVER (
-                        PARTITION BY video_id, CAST(ROUND(hours_elapsed) AS INTEGER)
+                        PARTITION BY video_id, logged_at
                         ORDER BY logged_at DESC, rowid DESC
                     ) AS duplicate_rank,
                     DENSE_RANK() OVER (
                         PARTITION BY video_id
-                        ORDER BY CAST(ROUND(hours_elapsed) AS INTEGER) DESC
+                        ORDER BY logged_at DESC
                     ) AS bucket_rank
                 FROM video_metrics
             )
@@ -112,7 +112,34 @@ def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
     if deleted >= 1000 or os.path.getsize(DB_FILE) >= 80 * 1024 * 1024:
         conn.execute("VACUUM")
     print(f"🧹 [DB 자동 정리] {deleted:,}개 중복/과거 기록 제거 · {after:,}개 유지 "
-          f"(최근 {DETAILED_HISTORY_DAYS}일, 영상별 최대 {buckets_per_video}개 시간대)")
+          f"(최근 {DETAILED_HISTORY_DAYS}일, 영상별 최대 {buckets_per_video}회 실제 측정)")
+
+def measurement_time(value):
+    try:
+        dt = datetime.datetime.fromisoformat(value)
+        return dt.replace(tzinfo=KST) if dt.tzinfo is None else dt.astimezone(KST)
+    except (TypeError, ValueError):
+        return None
+
+def attach_chart_history(processed, conn):
+    history_map = {}
+    for vid, h, views, logged_at in conn.execute("""
+        SELECT video_id, hours_elapsed, views, logged_at
+        FROM video_metrics WHERE views > 0 ORDER BY logged_at ASC, rowid ASC
+    """):
+        dt = measurement_time(logged_at)
+        if dt is None:
+            continue
+        point = {"h": dt.strftime("%m/%d %H:%M"), "v": views, "raw_h": h,
+                 "logged_at": dt.strftime("%Y-%m-%d %H:%M:%S"), "ts": int(dt.timestamp()*1000)}
+        points = history_map.setdefault(vid, [])
+        if points and points[-1]["ts"] == point["ts"]:
+            points[-1] = point
+        else:
+            points.append(point)
+    for item in processed:
+        # One measurement stays one point; unobserved hours are never fabricated.
+        item["chart_data"] = history_map.get(item["video_id"], [])[-MAX_HISTORY_BUCKETS_PER_VIDEO:]
 
 def sync_history_from_google_sheet():
     conn = sqlite3.connect(DB_FILE)
@@ -371,7 +398,7 @@ def record_and_prepare_data(video_items, yt_stats):
             GROUP BY video_id
         )
     """)
-    last_views_map = {row[0]: {"views": row[1], "likes": row[2], "comments": row[3]} for row in cursor.fetchall()}
+    last_views_map = {row[0]: {"views": row[1], "likes": row[2], "comments": row[3], "logged_at": row[4]} for row in cursor.fetchall()}
 
     processed = []
     db_rows = []
@@ -379,6 +406,7 @@ def record_and_prepare_data(video_items, yt_stats):
     for item in video_items:
         vid = item["video_id"]
         stats = yt_stats.get(vid)
+        measurement_fresh = bool(stats and stats.get("views", 0) > 0)
         
         if not stats or stats.get("views", 0) == 0:
             if vid in last_views_map:
@@ -395,10 +423,10 @@ def record_and_prepare_data(video_items, yt_stats):
         time_ago_str = format_hours_to_korean(hrs)
 
         prev_info = last_views_map.get(vid)
-        if prev_info and stats["views"] > prev_info["views"]:
-            recent_growth = stats["views"] - prev_info["views"]
-        else:
-            recent_growth = vph
+        previous_time = measurement_time(prev_info["logged_at"]) if prev_info else None
+        gap_hours = (now_kst-previous_time).total_seconds()/3600 if previous_time else None
+        recent_growth = max(0, stats["views"]-prev_info["views"]) if measurement_fresh and previous_time else None
+        recent_growth_rate = round(recent_growth/gap_hours) if recent_growth is not None and gap_hours and gap_hours > 0 else 0
 
         row_data = {
             "page_id": item["page_id"],
@@ -418,13 +446,16 @@ def record_and_prepare_data(video_items, yt_stats):
             "time_ago_str": time_ago_str,
             "vph": vph,
             "recent_growth": recent_growth,
+            "recent_growth_rate": recent_growth_rate,
+            "measurement_gap_minutes": round(gap_hours*60, 1) if measurement_fresh and gap_hours and gap_hours > 0 else None,
+            "measurement_fresh": measurement_fresh,
             "sub_rate": sub_rate,
             "up_str": up_str,
-            "logged_at": kst_now_str
+            "logged_at": kst_now_str if measurement_fresh else (prev_info["logged_at"] if prev_info else "")
         }
         processed.append(row_data)
 
-        if stats["views"] > 0:
+        if measurement_fresh:
             db_rows.append((
                 kst_now_str, item["page_id"], vid, item["channel_name"], item["title"],
                 stats["views"], stats["likes"], stats["comments"], hrs, vph,
@@ -442,36 +473,8 @@ def record_and_prepare_data(video_items, yt_stats):
 
     compact_history(conn)
 
-    cursor.execute("""
-        SELECT video_id, hours_elapsed, views, logged_at
-        FROM video_metrics
-        WHERE views > 0
-        ORDER BY hours_elapsed ASC
-    """)
-    all_history = cursor.fetchall()
+    attach_chart_history(processed, conn)
     conn.close()
-
-    history_map = {}
-    for vid, h, v, log_t in all_history:
-        if vid not in history_map:
-            history_map[vid] = []
-        int_h = int(round(h))
-        h_str = f"{int_h}시간"
-        
-        if history_map[vid] and history_map[vid][-1]["h"] == h_str:
-            history_map[vid][-1]["v"] = v
-        else:
-            history_map[vid].append({"h": h_str, "v": v, "raw_h": h})
-
-    for p in processed:
-        h_data = history_map.get(p["video_id"], [])
-        if len(h_data) <= 1:
-            cur_h = int(round(p["hours_elapsed"]))
-            init_h = max(0, cur_h - 1)
-            init_v = max(0, int(p["views"] - p["vph"]))
-            h_data = [{"h": f"{init_h}시간", "v": init_v}, {"h": f"{cur_h}시간", "v": p["views"]}]
-        
-        p["chart_data"] = h_data[-MAX_HISTORY_BUCKETS_PER_VIDEO:]
 
     return processed
 
@@ -479,6 +482,10 @@ def generate_rich_dashboard(data):
     now_kst = datetime.datetime.now(KST)
     last_update_ts = int(now_kst.timestamp() * 1000)
     last_update_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    measured = [dt for item in data if (dt := measurement_time(item.get("logged_at")))]
+    last_measurement = max(measured) if measured else None
+    measurement_ts = int(last_measurement.timestamp()*1000) if last_measurement else 0
+    measurement_str = last_measurement.strftime("%Y-%m-%d %H:%M:%S") if last_measurement else "측정 기록 없음"
     json_data = json.dumps(data, ensure_ascii=False)
 
     html_template = """<!DOCTYPE html>
@@ -486,7 +493,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드 v3.8</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.9</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -586,15 +593,17 @@ def generate_rich_dashboard(data):
         .engagement-line { display: flex; gap: 12px; font-size: 12px; color: var(--text-sub); }
 
         .chart-box { width: 100%; height: 110px; margin-top: auto; border-top: 1px dashed var(--border-color); padding-top: 6px; }
+        .measurement-note { font-size: 11px; color: #64748b; margin: 5px 0; line-height: 1.6; }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.8</span></h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.9</span></h1>
         <div class="header-meta">
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
-            <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
+            <div id="update-status">최근 실제 수집: __MEASUREMENT_STR__ (KST)</div>
+            <div class="measurement-note">페이지 생성: __LAST_UPDATE_STR__ (KST) · 매시간 17분 수집 예약</div>
         </div>
     </div>
 
@@ -602,7 +611,8 @@ def generate_rich_dashboard(data):
         <div>
             <div>🔥 <strong>시간당:</strong> 업로드 이후 1시간 평균 조회수 (확산 속도)</div>
             <div>📈 <strong>구독자 대비:</strong> 현재 조회수 ÷ 채널 구독자 수 비율 (100% 돌파 시 알고리즘 노출)</div>
-            <div>🚨 <strong>급상승 알림:</strong> 최근 1시간 내 급격히 조회수가 폭등한 영상에 붉은색 알림이 점멸합니다.</div>
+            <div>🚨 <strong>급상승 알림:</strong> 최근 두 실제 측정 사이의 증가량을 시간당으로 환산해 비교합니다. 카드에 측정 간격을 표시합니다.</div>
+            <div>🕒 <strong>그래프:</strong> 한국 시간의 실제 수집 시각으로 최대 24회 측정을 연결합니다. 수집 간격만큼 점 사이 간격도 달라집니다. GitHub 예약은 지연·누락될 수 있습니다.</div>
             <div>💡 <strong>팁:</strong> 카드의 <strong>[📺 채널명]</strong>을 누르면 해당 채널의 영상만 즉시 모아볼 수 있습니다.</div>
         </div>
         <div class="stats-summary">
@@ -666,9 +676,22 @@ def generate_rich_dashboard(data):
     <script>
         const rawVideos = __RAW_VIDEOS__;
         const lastUpdateTs = __LAST_UPDATE_TS__;
+        const lastMeasurementTs = __MEASUREMENT_TS__;
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
         let activeChannel = ""; 
+
+        function measuredTime(ts, full = false) {
+            const parts = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+            }).formatToParts(new Date(ts));
+            const p = Object.fromEntries(parts.map(part => [part.type, part.value]));
+            return `${p.month}/${p.day} ${p.hour}:${p.minute}${full ? ':' + p.second + ' KST' : ''}`;
+        }
+        function measuredGap(minutes) {
+            return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${Math.round(minutes % 60)}분` : `${minutes.toFixed(1)}분`;
+        }
 
         function startLiveClock() {
             function updateClock() {
@@ -686,9 +709,9 @@ def generate_rich_dashboard(data):
                 document.getElementById("live-clock").innerText = 
                     `현재 시간: ${year}. ${month}. ${date}. ${ampm} ${String(hours).padStart(2, '0')}:${minutes}:${seconds}`;
 
-                const diffMinutes = Math.floor((now.getTime() - lastUpdateTs) / 60000);
+                const diffMinutes = Math.max(0, Math.floor((now.getTime() - lastMeasurementTs) / 60000));
                 document.getElementById("update-status").innerText = 
-                    `마지막 업데이트: __LAST_UPDATE_STR__ (${Math.max(0, diffMinutes)}분 경과)`;
+                    lastMeasurementTs ? `최근 실제 수집: __MEASUREMENT_STR__ KST (${diffMinutes}분 전)${diffMinutes >= 90 ? ' · 다음 수집 대기 / 예약 지연 가능' : ''}` : '실제 측정 기록 없음';
             }
             updateClock();
             setInterval(updateClock, 1000);
@@ -795,7 +818,7 @@ def generate_rich_dashboard(data):
                 }
 
                 if (excludeMajor && majorKeywords.some(m => chName.toUpperCase().includes(m))) return false;
-                if (burstOnly && (v.recent_growth || 0) < 3000) return false;
+                if (burstOnly && (v.recent_growth_rate || 0) < 3000) return false;
                 
                 if (purpose !== "all" && vPurpose !== purpose) return false;
                 if (format !== "all" && !vFormat.includes(format)) return false;
@@ -854,10 +877,10 @@ def generate_rich_dashboard(data):
                 const escapedChName = (v.channel_name || "").replace(/'/g, "\\'");
 
                 let surgeHtml = "";
-                if ((v.recent_growth || 0) >= 3000) {
+                if ((v.recent_growth_rate || 0) >= 3000) {
                     surgeHtml = `
                         <div class="surge-box">
-                            🚨 최근 1시간 급상승 (+${(v.recent_growth || 0).toLocaleString()}회)
+                            🚨 최근 ${measuredGap(v.measurement_gap_minutes)} +${(v.recent_growth || 0).toLocaleString()}회 (시간당 환산 +${v.recent_growth_rate.toLocaleString()})
                         </div>
                     `;
                 }
@@ -902,6 +925,10 @@ def generate_rich_dashboard(data):
                             </div>
                         </div>
 
+                        <div class="measurement-note">
+                            실제 수집: ${v.logged_at || '기록 없음'} KST${v.measurement_fresh === false ? ' · 새 측정 실패, 저장값 사용' : ''}<br>
+                            ${(v.chart_data || []).length >= 2 ? `실측 ${(v.chart_data || []).length}회 · 최근 간격 ${measuredGap(((v.chart_data.at(-1).ts - v.chart_data.at(-2).ts) / 60000))}` : '실측 1회 이하 · 다음 측정 후 추이 표시'}
+                        </div>
                         <div class="chart-box">
                             <canvas id="${chartId}"></canvas>
                         </div>
@@ -913,13 +940,11 @@ def generate_rich_dashboard(data):
                     const ctx = document.getElementById(chartId);
                     if (!ctx) return;
                     const cData = v.chart_data || [];
-                    const labels = cData.map(c => c.h);
-                    const values = cData.map(c => c.v);
+                    const values = cData.map(c => ({x: c.ts, y: c.v}));
 
                     new Chart(ctx, {
                         type: 'line',
                         data: {
-                            labels: labels,
                             datasets: [{
                                 data: values,
                                 borderColor: '#ef4444',
@@ -928,7 +953,7 @@ def generate_rich_dashboard(data):
                                 pointBackgroundColor: '#ef4444',
                                 pointRadius: 3.5,
                                 fill: false,
-                                tension: 0.1
+                                tension: 0
                             }]
                         },
                         options: {
@@ -939,6 +964,9 @@ def generate_rich_dashboard(data):
                                 tooltip: { 
                                     enabled: true,
                                     callbacks: {
+                                        title: function(items) {
+                                            return items.length ? measuredTime(items[0].parsed.x, true) : '';
+                                        },
                                         label: function(context) {
                                             return context.parsed.y.toLocaleString() + '회';
                                         }
@@ -947,8 +975,15 @@ def generate_rich_dashboard(data):
                             },
                             scales: {
                                 x: { 
+                                    type: 'linear',
+                                    min: cData[0]?.ts,
+                                    max: cData.at(-1)?.ts,
+                                    afterBuildTicks: function(axis) {
+                                        const indices = [...new Set([0, Math.round((cData.length-1)/3), Math.round(2*(cData.length-1)/3), cData.length-1])];
+                                        axis.ticks = indices.filter(i => cData[i]).map(i => ({value: cData[i].ts}));
+                                    },
                                     grid: { display: false }, 
-                                    ticks: { font: { size: 9 }, color: '#94a3b8' } 
+                                    ticks: { font: { size: 9 }, color: '#94a3b8', maxRotation: 0, callback: val => measuredTime(val) }
                                 },
                                 y: {
                                     position: 'right',
@@ -983,13 +1018,13 @@ def generate_rich_dashboard(data):
 </body>
 </html>"""
 
-    final_html = html_template.replace("__LAST_UPDATE_TS__", str(last_update_ts)).replace("__LAST_UPDATE_STR__", last_update_str).replace("__RAW_VIDEOS__", json_data)
+    final_html = html_template.replace("__LAST_UPDATE_TS__", str(last_update_ts)).replace("__LAST_UPDATE_STR__", last_update_str).replace("__RAW_VIDEOS__", json_data).replace("__MEASUREMENT_TS__", str(measurement_ts)).replace("__MEASUREMENT_STR__", measurement_str)
 
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료 v3.8] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.9] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")

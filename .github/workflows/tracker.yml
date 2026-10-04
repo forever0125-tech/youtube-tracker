@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '0 * * * *'  # 매시간 정시마다 자동 실행
+    - cron: '17 * * * *'  # 정시 혼잡을 피해 매시간 17분 예약 (실행 지연 가능)
   workflow_dispatch:
 
 permissions:
