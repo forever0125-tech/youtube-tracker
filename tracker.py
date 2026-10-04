@@ -1,5 +1,5 @@
 # ==============================================================================
-# YouTube Benchmarking Tracker v3.7
+# YouTube Benchmarking Tracker v3.8
 # - 카드 내 [📺 채널명] 클릭 시 검색창을 비우고 100% 채널 단위로만 단독 필터링
 # - 상단 키워드 바 제외 단어 강화(전계완, 생중계, 화면출처 등) 및 20개 노출 확장
 # - 노션 [쇼츠 소재] 체크박스 연동 및 대시보드 목적 필터 탑재
@@ -471,7 +471,7 @@ def record_and_prepare_data(video_items, yt_stats):
             init_v = max(0, int(p["views"] - p["vph"]))
             h_data = [{"h": f"{init_h}시간", "v": init_v}, {"h": f"{cur_h}시간", "v": p["views"]}]
         
-        p["chart_data"] = h_data[-8:]
+        p["chart_data"] = h_data[-MAX_HISTORY_BUCKETS_PER_VIDEO:]
 
     return processed
 
@@ -486,7 +486,7 @@ def generate_rich_dashboard(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>정치1황 실시간 벤치마킹 대시보드 v3.7</title>
+    <title>정치1황 실시간 벤치마킹 대시보드 v3.8</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -591,7 +591,7 @@ def generate_rich_dashboard(data):
 <body>
 
     <div class="header">
-        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.7</span></h1>
+        <h1>👑 정치1황 실시간 벤치마킹 대시보드 <span style="font-size:12px; color:#94a3b8; font-weight:normal;">v3.8</span></h1>
         <div class="header-meta">
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
             <div id="update-status">마지막 업데이트: __LAST_UPDATE_STR__ (0분 경과)</div>
@@ -989,7 +989,7 @@ def generate_rich_dashboard(data):
         f.write(final_html)
     with open("dashboard.html", "w", encoding="utf-8") as f:
         f.write(final_html)
-    print(f"✨ [대시보드 렌더링 완료 v3.7] index.html 및 dashboard.html 생성 성공")
+    print(f"✨ [대시보드 렌더링 완료 v3.8] index.html 및 dashboard.html 생성 성공")
 
 def main():
     print("▶️ 파이프라인 시작: 타겟 채널 및 최근 영상 수집")
