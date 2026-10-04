@@ -45,6 +45,7 @@ current_yt_key_index = 0
 LOG_SHEET_ID = "18UkL2pTTnpuGVqrafQC2uKP2C6juda_4ViJejYoXt80"
 DB_FILE = "tracker.db"
 MAX_HISTORY_BUCKETS_PER_VIDEO = 24
+DETAILED_HISTORY_DAYS = 14
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 NOTION_HEADERS = {
@@ -81,9 +82,11 @@ def init_sqlite():
     conn.close()
 
 def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
-    """Keep one sample per elapsed-hour bucket and only the newest buckets per video."""
+    """Bound DB growth; the dashboard only serves videos collected in the recent seven days."""
     cursor = conn.cursor()
     before = cursor.execute("SELECT COUNT(*) FROM video_metrics").fetchone()[0]
+    cutoff = (datetime.datetime.now(KST) - datetime.timedelta(days=DETAILED_HISTORY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("DELETE FROM video_metrics WHERE logged_at < ?", (cutoff,))
     cursor.execute("""
         DELETE FROM video_metrics
         WHERE rowid NOT IN (
@@ -106,9 +109,10 @@ def compact_history(conn, buckets_per_video=MAX_HISTORY_BUCKETS_PER_VIDEO):
     conn.commit()
     after = cursor.execute("SELECT COUNT(*) FROM video_metrics").fetchone()[0]
     deleted = before - after
-    if deleted:
+    if deleted >= 1000 or os.path.getsize(DB_FILE) >= 80 * 1024 * 1024:
         conn.execute("VACUUM")
-    print(f"🧹 [DB 자동 정리] {deleted:,}개 중복/과거 기록 제거 · {after:,}개 유지")
+    print(f"🧹 [DB 자동 정리] {deleted:,}개 중복/과거 기록 제거 · {after:,}개 유지 "
+          f"(최근 {DETAILED_HISTORY_DAYS}일, 영상별 최대 {buckets_per_video}개 시간대)")
 
 def sync_history_from_google_sheet():
     conn = sqlite3.connect(DB_FILE)
