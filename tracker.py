@@ -419,7 +419,7 @@ def record_and_prepare_data(video_items, yt_stats):
         vph = round(stats["views"] / hrs)
         sub_rate = round((stats["views"] / item["subscribers"] * 100), 1) if item["subscribers"] > 0 else 0
 
-        up_str = up_dt.strftime("%m/%d %H:%M")
+        up_str = up_dt.strftime("%Y-%m-%d %H:%M:%S")
         time_ago_str = format_hours_to_korean(hrs)
 
         prev_info = last_views_map.get(vid)
@@ -683,11 +683,11 @@ def generate_rich_dashboard(data):
 
         function measuredTime(ts, full = false) {
             const parts = new Intl.DateTimeFormat('en-GB', {
-                timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit',
+                timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
             }).formatToParts(new Date(ts));
             const p = Object.fromEntries(parts.map(part => [part.type, part.value]));
-            return `${p.month}/${p.day} ${p.hour}:${p.minute}${full ? ':' + p.second + ' KST' : ''}`;
+            return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
         }
         function measuredGap(minutes) {
             return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${Math.round(minutes % 60)}분` : `${minutes.toFixed(1)}분`;
@@ -696,18 +696,9 @@ def generate_rich_dashboard(data):
         function startLiveClock() {
             function updateClock() {
                 const now = new Date();
-                const year = now.getFullYear();
-                const month = String(now.getMonth() + 1).padStart(2, '0');
-                const date = String(now.getDate()).padStart(2, '0');
-                let hours = now.getHours();
-                const minutes = String(now.getMinutes()).padStart(2, '0');
-                const seconds = String(now.getSeconds()).padStart(2, '0');
-                const ampm = hours >= 12 ? '오후' : '오전';
-                hours = hours % 12;
-                hours = hours ? hours : 12;
 
                 document.getElementById("live-clock").innerText = 
-                    `현재 시간: ${year}. ${month}. ${date}. ${ampm} ${String(hours).padStart(2, '0')}:${minutes}:${seconds}`;
+                    `현재 시간: ${measuredTime(now.getTime(), true)}`;
 
                 const diffMinutes = Math.max(0, Math.floor((now.getTime() - lastMeasurementTs) / 60000));
                 document.getElementById("update-status").innerText = 
