@@ -122,7 +122,7 @@
             <div>🔥 <strong>시간당:</strong> 업로드 이후 1시간 평균 조회수 (확산 속도)</div>
             <div>📈 <strong>구독자 대비:</strong> 현재 조회수 ÷ 채널 구독자 수 비율 (100% 돌파 시 알고리즘 노출)</div>
             <div>🚨 <strong>급상승 알림:</strong> 최근 두 실제 측정 사이의 증가량을 시간당으로 환산해 비교합니다. 카드에 측정 간격을 표시합니다.</div>
-            <div>🕒 <strong>그래프:</strong> 한국 시간의 실제 수집 시각으로 최대 24회 측정을 연결합니다. 수집 간격만큼 점 사이 간격도 달라집니다. GitHub 예약은 지연·누락될 수 있습니다.</div>
+            <div>🕒 <strong>그래프:</strong> 한국 시간의 실제 수집 시각으로 최대 12회 측정을 연결합니다. 수집 간격만큼 점 사이 간격도 달라집니다. GitHub 예약은 지연·누락될 수 있습니다.</div>
             <div>💡 <strong>팁:</strong> 카드의 <strong>[📺 채널명]</strong>을 누르면 해당 채널의 영상만 즉시 모아볼 수 있습니다.</div>
         </div>
         <div class="stats-summary">
@@ -440,7 +440,7 @@
                 setTimeout(() => {
                     const ctx = document.getElementById(chartId);
                     if (!ctx) return;
-                    const cData = v.chart_data || [];
+                    const cData = (v.chart_data || []).slice(-12);
                     const values = cData.map(c => ({x: c.ts, y: c.v}));
 
                     new Chart(ctx, {
