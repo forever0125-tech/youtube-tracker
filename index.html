@@ -202,6 +202,12 @@
         function measuredGap(minutes) {
             return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${Math.round(minutes % 60)}분` : `${minutes.toFixed(1)}분`;
         }
+        function relativeChartTime(ts, latestTs) {
+            const diffMinutes = Math.max(0, Math.round((latestTs - ts) / 60000));
+            if (diffMinutes < 10) return '최근';
+            if (diffMinutes < 60) return `${diffMinutes}분 전`;
+            return `${Math.round(diffMinutes / 60)}시간 전`;
+        }
 
         function startLiveClock() {
             function updateClock() {
@@ -484,7 +490,12 @@
                                         axis.ticks = indices.filter(i => cData[i]).map(i => ({value: cData[i].ts}));
                                     },
                                     grid: { display: false }, 
-                                    ticks: { font: { size: 9 }, color: '#94a3b8', maxRotation: 0, callback: val => measuredTime(val) }
+                                    ticks: {
+                                        font: { size: 10 },
+                                        color: '#64748b',
+                                        maxRotation: 0,
+                                        callback: val => relativeChartTime(val, cData.at(-1)?.ts || val)
+                                    }
                                 },
                                 y: {
                                     position: 'right',
