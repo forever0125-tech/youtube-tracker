@@ -1013,7 +1013,43 @@ def generate_rich_dashboard(data):
         startLiveClock();
         renderCards();
 
+        const trackerViewKey = 'youtube-tracker:view:v1';
+        const trackerViewControls = ['search-input','exclude-major','burst-only','filter-purpose','filter-format','filter-hours','filter-bias','sort-order'];
+        function saveTrackerView() {
+            try {
+                const controls = {};
+                for (const id of trackerViewControls) {
+                    const el = document.getElementById(id);
+                    controls[id] = el.type === 'checkbox' ? el.checked : el.value;
+                }
+                sessionStorage.setItem(trackerViewKey, JSON.stringify({controls, activeKeyword, activeChannel, scrollY: window.scrollY}));
+            } catch (_) {}
+        }
+        function restoreTrackerView() {
+            try {
+                const state = JSON.parse(sessionStorage.getItem(trackerViewKey) || 'null');
+                if (!state) return;
+                for (const [id,value] of Object.entries(state.controls || {})) {
+                    const el = document.getElementById(id);
+                    if (!el) continue;
+                    if (el.type === 'checkbox') el.checked = value === true;
+                    else if (el.tagName !== 'SELECT' || [...el.options].some(o => o.value === value)) el.value = value;
+                }
+                activeKeyword = state.activeKeyword || '';
+                activeChannel = state.activeChannel || '';
+                renderCards();
+                requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, Number(state.scrollY) || 0)));
+            } catch (_) {}
+        }
+        restoreTrackerView();
+        document.addEventListener('input', saveTrackerView);
+        document.addEventListener('change', saveTrackerView);
+        document.addEventListener('click', () => setTimeout(saveTrackerView, 0));
+        window.addEventListener('pagehide', saveTrackerView);
+        window.addEventListener('beforeunload', saveTrackerView);
+
         setInterval(function() {
+            saveTrackerView();
             window.location.reload();
         }, 600000);
     </script>
