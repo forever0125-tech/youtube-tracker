@@ -562,6 +562,9 @@ def generate_rich_dashboard(data):
         .card-body { padding: 14px; display: flex; flex-direction: column; flex-grow: 1; }
         .card-title { font-size: 14px; font-weight: 700; line-height: 1.4; margin-bottom: 10px; color: var(--text-main); text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 38px; cursor: pointer; }
         .card-title:hover { color: #2563eb; }
+        .card-actions { display: flex; gap: 8px; margin: 0 0 10px; }
+        .copy-youtube-link { border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; border-radius: 6px; padding: 7px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .copy-youtube-link:hover { background: #dbeafe; }
         
         .meta-badges { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
         .badge-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
@@ -897,6 +900,7 @@ def generate_rich_dashboard(data):
                     </div>
                     <div class="card-body">
                         <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title" title="${safeTitle}">${v.title}</a>
+                        <div class="card-actions"><button type="button" class="copy-youtube-link" aria-label="유튜브 링크 복사">🔗 유튜브 링크 복사</button></div>
                         
                         <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
                             🕒 ${v.up_str} (${v.time_ago_str}) | 👥 구독자 ${(v.subscribers || 0).toLocaleString()}명
@@ -932,6 +936,30 @@ def generate_rich_dashboard(data):
                     </div>
                 `;
                 container.appendChild(card);
+                card.querySelector(".copy-youtube-link").addEventListener("click", async (event) => {
+                    const button = event.currentTarget;
+                    const link = `https://www.youtube.com/watch?v=${v.video_id}`;
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(link);
+                        } else {
+                            const input = document.createElement("textarea");
+                            input.value = link;
+                            input.style.position = "fixed";
+                            input.style.opacity = "0";
+                            document.body.appendChild(input);
+                            input.select();
+                            const copied = document.execCommand("copy");
+                            input.remove();
+                            if (!copied) throw new Error("clipboard unavailable");
+                        }
+                        button.textContent = "✅ 링크 복사됨";
+                    } catch {
+                        window.prompt("아래 유튜브 링크를 복사하세요", link);
+                        button.textContent = "🔗 유튜브 링크 복사";
+                    }
+                    setTimeout(() => { if (button.isConnected) button.textContent = "🔗 유튜브 링크 복사"; }, 2000);
+                });
 
                 setTimeout(() => {
                     const ctx = document.getElementById(chartId);
