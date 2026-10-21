@@ -468,10 +468,11 @@
                     link.remove();
                 });
                 card.querySelector(".register-shorts").addEventListener("click", () => {
-                    const target = new URL("http://127.0.0.1:8910/shorts-analysis");
+                    const target = new URL("http://127.0.0.1:8910/");
                     target.searchParams.set("trackerVideo", v.video_id);
                     target.searchParams.set("trackerTitle", v.title || "");
                     target.searchParams.set("trackerChannel", v.channel_name || "");
+                    target.hash = "shorts-analysis";
                     window.open(target.href, "_blank", "noopener");
                 });
                 card.querySelector(".copy-youtube-link").addEventListener("click", async (event) => {
