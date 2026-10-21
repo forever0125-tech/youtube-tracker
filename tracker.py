@@ -904,7 +904,7 @@ def generate_rich_dashboard(data):
                     </div>
                     <div class="card-body">
                         <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title" title="${safeTitle}">${v.title}</a>
-                        <div class="card-actions"><button type="button" class="copy-youtube-link" aria-label="유튜브 링크 복사">🔗 유튜브 링크 복사</button><button type="button" class="send-shorts-codex">✳ Codex로 쇼츠 보내기</button><button type="button" class="register-shorts">제작실에 등록</button></div>
+                        <div class="card-actions"><button type="button" class="copy-youtube-link" aria-label="유튜브 링크 복사">🔗 유튜브 링크 복사</button><button type="button" class="send-shorts-codex">✳ Codex로 쇼츠 보내기</button><button type="button" class="register-shorts">쇼츠분석</button></div>
                         
                         <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">
                             🕒 ${v.up_str} (${v.time_ago_str}) | 👥 구독자 ${(v.subscribers || 0).toLocaleString()}명
@@ -953,7 +953,7 @@ def generate_rich_dashboard(data):
                     link.remove();
                 });
                 card.querySelector(".register-shorts").addEventListener("click", () => {
-                    const target = new URL("http://127.0.0.1:8910/shorts");
+                    const target = new URL("http://127.0.0.1:8910/shorts-analysis");
                     target.searchParams.set("trackerVideo", v.video_id);
                     target.searchParams.set("trackerTitle", v.title || "");
                     target.searchParams.set("trackerChannel", v.channel_name || "");
