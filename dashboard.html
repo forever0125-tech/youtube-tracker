@@ -194,7 +194,67 @@
         const lastMeasurementTs = 1792678527000;
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
-        let activeChannel = ""; 
+        let activeChannel = "";
+
+        const trackerShorts = new Map();
+        let trackerShortsConnected = false;
+        const shortsLabels = {analyzing:'분석 중',choose:'방향 선택 대기',producing:'제작 중',produced:'쇼츠 제작 완료',paused:'일시 중지',failed:'확인 필요'};
+        function updateTrackerShortsBadge(card, videoId) {
+            const badge = card.querySelector('.tracker-shorts-status');
+            if (!badge) return;
+            const rows = trackerShorts.get(videoId) || [];
+            badge.replaceChildren();
+            if (!trackerShortsConnected) { badge.textContent = '제작 이력 확인 불가 · 제작실 연결 필요'; return; }
+            if (!rows.length) { badge.textContent = '쇼츠분석 이력 없음'; return; }
+            for (const row of rows) {
+                const link = document.createElement('a');
+                link.href = 'http://127.0.0.1:8910/shorts-analysis?embedded=1#' + row.id;
+                link.target = '_blank'; link.rel = 'noopener';
+                link.textContent = row.number + ' · ' + (shortsLabels[row.status] || '확인 필요');
+                link.style.cssText = 'display:inline-block;margin-right:6px;color:' + (row.status === 'produced' ? '#047857' : '#1d4ed8');
+                badge.append(link);
+            }
+        }
+        function refreshTrackerShortsBadges() {
+            document.querySelectorAll('[data-tracker-source]').forEach(card => updateTrackerShortsBadge(card, card.dataset.trackerSource));
+        }
+        function connectTrackerShorts() {
+            const origin = 'http://127.0.0.1:8910';
+            const frame = document.createElement('iframe');
+            frame.hidden = true; frame.title = '쇼츠 제작 이력 연결';
+            let deadline;
+            function request() {
+                frame.contentWindow?.postMessage({type:'tracker-shorts-status-request'}, origin);
+                clearTimeout(deadline);
+                deadline = setTimeout(() => {trackerShortsConnected = false; refreshTrackerShortsBadges();}, 8000);
+            }
+            window.addEventListener('message', event => {
+                if (event.origin !== origin || event.source !== frame.contentWindow) return;
+                if (event.data?.type === 'tracker-shorts-status-ready') { request(); return; }
+                if (!['tracker-shorts-status-result','tracker-shorts-status-error'].includes(event.data?.type)) return;
+                clearTimeout(deadline);
+                trackerShortsConnected = event.data.type === 'tracker-shorts-status-result' && Array.isArray(event.data.items);
+                trackerShorts.clear();
+                if (trackerShortsConnected) for (const row of event.data.items) {
+                    if (!/^[a-f0-9]{32}$/.test(row.id) || !/^S[0-9]{3}$/.test(row.number)) continue;
+                    try {
+                        const url = new URL(row.url);
+                        if (!['www.youtube.com','youtube.com'].includes(url.hostname)) continue;
+                        const id = url.searchParams.get('v');
+                        if (!/^[A-Za-z0-9_-]{11}$/.test(id || '')) continue;
+                        if (!trackerShorts.has(id)) trackerShorts.set(id, []);
+                        trackerShorts.get(id).push(row);
+                    } catch (_) {}
+                }
+                refreshTrackerShortsBadges();
+            });
+            frame.src = origin + '/shorts-analysis?embedded=1&trackerStatusBridge=1';
+            frame.onload = request;
+            document.body.append(frame);
+            window.addEventListener('focus', request);
+            setInterval(() => {if (!document.hidden) request();}, 30000);
+        }
+ 
 
         function measuredTime(ts, full = false) {
             const parts = new Intl.DateTimeFormat('en-GB', {
@@ -447,7 +507,14 @@
                         </div>
                     </div>
                 `;
+                card.dataset.trackerSource = v.video_id;
+                const shortsStatus = document.createElement('div');
+                shortsStatus.className = 'tracker-shorts-status';
+                shortsStatus.style.cssText = 'font-size:12px;font-weight:700;margin:0 0 10px;color:#64748b';
+                shortsStatus.setAttribute('aria-live','polite');
+                card.querySelector('.card-actions').after(shortsStatus);
                 container.appendChild(card);
+                updateTrackerShortsBadge(card, v.video_id);
                 card.querySelector(".register-shorts").addEventListener("click", () => {
                     const target = new URL("http://127.0.0.1:8910/");
                     target.searchParams.set("trackerVideo", v.video_id);
@@ -560,6 +627,7 @@
 
         startLiveClock();
         renderCards();
+        connectTrackerShorts();
 
         const trackerViewKey = 'youtube-tracker:view:v1';
         const trackerViewControls = ['search-input','exclude-major','burst-only','filter-purpose','filter-format','filter-hours','filter-bias','sort-order'];
