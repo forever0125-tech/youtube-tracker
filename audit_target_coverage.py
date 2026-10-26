@@ -49,6 +49,33 @@ def unavailable_youtube_channels(channel_ids):
     return {name: channel_id for name, channel_id in channel_ids.items() if channel_id not in known}
 
 
+def latest_uploads(channel_ids, names):
+    result = {}
+    key = tracker.YOUTUBE_API_KEYS[0]
+    for name in names:
+        channel_id = channel_ids.get(name)
+        if not channel_id:
+            result[name] = "채널 ID 없음"
+            continue
+        channel = requests.get("https://www.googleapis.com/youtube/v3/channels", params={
+            "part": "contentDetails", "id": channel_id, "key": key,
+        }, timeout=25)
+        channel.raise_for_status()
+        items = channel.json().get("items", [])
+        if not items:
+            result[name] = "채널 ID 조회 불가"
+            continue
+        playlist = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+        upload = requests.get("https://www.googleapis.com/youtube/v3/playlistItems", params={
+            "part": "contentDetails", "playlistId": playlist, "maxResults": 1, "key": key,
+        }, timeout=25)
+        upload.raise_for_status()
+        videos = upload.json().get("items", [])
+        result[name] = (videos[0].get("contentDetails", {}).get("videoPublishedAt")
+                        if videos else "공개 업로드 없음")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
@@ -81,6 +108,8 @@ def main():
             "no_recent_video": absent,
             "video_rows": sum(counts[name] for name in names),
         }
+    missing_names = sorted({name for role in report["roles"].values() for name in role["no_recent_video"]})
+    report["latest_uploads_for_no_recent_channels"] = latest_uploads(channel_ids, missing_names)
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
     print(json.dumps(report, ensure_ascii=False))
