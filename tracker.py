@@ -30,7 +30,7 @@ if not NOTION_API_KEY and os.path.exists(CONFIG_PATH):
         pass
 
 if not NOTION_API_KEY:
-    NOTION_API_KEY = "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"
+    raise RuntimeError("NOTION_API_KEY is required")
 
 TARGET_DB_ID = "353a73c83d0780568544f053bfdca3bf"
 ISSUE_DB_ID = "353a73c83d07800a8aead62083146a44"
@@ -53,6 +53,21 @@ NOTION_HEADERS = {
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json"
 }
+
+
+def query_notion_database(database_id, payload):
+    """Fail loudly so an API error cannot publish an empty dashboard."""
+    response = requests.post(
+        f"https://api.notion.com/v1/databases/{database_id}/query",
+        headers=NOTION_HEADERS,
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("object") != "list" or not isinstance(data.get("results"), list):
+        raise RuntimeError(f"Notion database query returned an invalid result: {database_id}")
+    return data
 
 def init_sqlite():
     conn = sqlite3.connect(DB_FILE)
@@ -201,14 +216,13 @@ def format_hours_to_korean(hours_float):
     return f"{h}시간 {m}분 전"
 
 def fetch_target_channels():
-    url = f"https://api.notion.com/v1/databases/{TARGET_DB_ID}/query"
     channels = {}
     has_more = True
     next_cursor = None
     while has_more:
         payload = {"page_size": 100}
         if next_cursor: payload["start_cursor"] = next_cursor
-        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
+        res = query_notion_database(TARGET_DB_ID, payload)
         for p in res.get("results", []):
             page_id = p["id"]
             props = p.get("properties", {})
@@ -233,7 +247,6 @@ def fetch_target_channels():
     return channels
 
 def fetch_issue_videos(channel_meta_map):
-    url = f"https://api.notion.com/v1/databases/{ISSUE_DB_ID}/query"
     pages = []
     has_more = True
     next_cursor = None
@@ -253,7 +266,7 @@ def fetch_issue_videos(channel_meta_map):
 
     while has_more:
         if next_cursor: payload["start_cursor"] = next_cursor
-        res = requests.post(url, headers=NOTION_HEADERS, json=payload).json()
+        res = query_notion_database(ISSUE_DB_ID, payload)
         pages.extend(res.get("results", []))
         has_more = res.get("has_more", False)
         next_cursor = res.get("next_cursor")
@@ -1177,9 +1190,13 @@ def main():
     
     channels = fetch_target_channels()
     print(f"📌 노션 타겟 채널 {len(channels)}개 로드 완료")
+    if not channels:
+        raise RuntimeError("Notion target channel query returned no rows; keeping last dashboard")
 
     issue_videos = fetch_issue_videos(channels)
     print(f"📌 노션 최근 7일 영상 총 {len(issue_videos)}개 선별 로드 완료")
+    if not issue_videos:
+        raise RuntimeError("Notion issue query returned no videos; keeping last dashboard")
 
     video_ids = [v["video_id"] for v in issue_videos]
     yt_stats = get_videos_details(video_ids)

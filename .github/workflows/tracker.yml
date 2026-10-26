@@ -33,12 +33,15 @@ jobs:
           pip install -r requirements.txt
 
       - name: 트래커 스크립트 실행 (금고 키 주입)
+        id: tracker
+        continue-on-error: true
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
         run: |
           python tracker.py
 
       - name: 수집된 누적 DB 및 대시보드 저장
+        if: steps.tracker.outcome == 'success'
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -65,3 +68,9 @@ jobs:
       - name: GitHub Pages 웹 배포
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: 수집 실패 알림
+        if: steps.tracker.outcome == 'failure'
+        run: |
+          echo "Notion/YouTube collection failed. The last valid dashboard was deployed without replacing its data." >&2
+          exit 1
