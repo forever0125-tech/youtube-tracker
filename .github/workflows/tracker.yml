@@ -55,7 +55,13 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add tracker.db index.html dashboard.html
           git diff --staged --quiet || git commit -m "Auto-update tracker database and dashboard"
-          git push
+          if ! git push; then
+            # A code push may land while an hourly run is rendering. Rebase the
+            # generated snapshot onto that code, then publish once more.
+            git fetch origin main
+            git rebase origin/main
+            git push
+          fi
 
       - name: Pages 배포 설정
         uses: actions/configure-pages@v4
