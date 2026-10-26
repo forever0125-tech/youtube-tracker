@@ -246,6 +246,20 @@ def fetch_target_channels():
         next_cursor = res.get("next_cursor")
     return channels
 
+def classify_purposes(meta, collect_method=""):
+    """Preserve every checked purpose when a channel has multiple roles."""
+    purposes = []
+    if meta:
+        if meta.get("is_shorts_material"):
+            purposes.append("쇼츠 소재")
+        if meta.get("is_target"):
+            purposes.append("일반 수집대상")
+        if meta.get("is_copy"):
+            purposes.append("카피 벤치마킹")
+    if not purposes and ("직접" in collect_method or "스크랩" in collect_method):
+        purposes.append("카피 벤치마킹")
+    return purposes or ["기타 수집"]
+
 def fetch_issue_videos(channel_meta_map):
     pages = []
     has_more = True
@@ -326,14 +340,7 @@ def fetch_issue_videos(channel_meta_map):
         dur = p.get("영상 길이", {}).get("rich_text", [{}])[0].get("plain_text", "") if p.get("영상 길이", {}).get("rich_text") else ""
         collect_method = p.get("수집 방식", {}).get("select", {}).get("name", "") if p.get("수집 방식", {}).get("select") else ""
         
-        if matched_c_meta and matched_c_meta.get("is_shorts_material", False):
-            purpose_val = "쇼츠 소재"
-        elif matched_c_meta and matched_c_meta.get("is_target", False):
-            purpose_val = "일반 수집대상"
-        elif (matched_c_meta and matched_c_meta.get("is_copy", False)) or ("직접" in collect_method or "스크랩" in collect_method):
-            purpose_val = "카피 벤치마킹"
-        else:
-            purpose_val = "기타 수집"
+        purposes = classify_purposes(matched_c_meta, collect_method)
         
         cover = page.get("cover", {})
         thumb = cover.get("external", {}).get("url", "") if cover else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
@@ -348,17 +355,36 @@ def fetch_issue_videos(channel_meta_map):
             "upload_dt_kst": up_dt,
             "format": fmt,
             "duration": dur,
-            "purpose": purpose_val,
+            "purpose": purposes[0],
+            "purposes": purposes,
             "thumbnail": thumb
         })
     return video_items
+
+def duration_seconds(value):
+    match = re.fullmatch(r"P(?:([0-9]+)D)?T?(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+)S)?", value or "")
+    if not match or not any(match.groups()):
+        return 0
+    days, hours, minutes, seconds = (int(part or 0) for part in match.groups())
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+def finished_youtube_video(item):
+    """Only show videos whose live broadcast has ended and duration is final."""
+    snippet = item.get("snippet") or {}
+    live = item.get("liveStreamingDetails") or {}
+    if snippet.get("liveBroadcastContent") in ("live", "upcoming"):
+        return False
+    if live.get("actualStartTime") and not live.get("actualEndTime"):
+        return False
+    return duration_seconds((item.get("contentDetails") or {}).get("duration")) > 0
 
 def get_videos_details(video_ids):
     global current_yt_key_index
     details = {}
     if not video_ids: return details
 
-    print(f"📥 유튜브 API에서 영상 {len(video_ids)}개의 실시간 통계 조회 중...")
+    video_ids = list(dict.fromkeys(video_ids))
+    print(f"📥 유튜브 API에서 영상 {len(video_ids)}개의 상태·통계 조회 중...")
     
     for i in range(0, len(video_ids), 50):
         batch = video_ids[i:i+50]
@@ -366,7 +392,7 @@ def get_videos_details(video_ids):
 
         while not success and current_yt_key_index < len(YOUTUBE_API_KEYS):
             active_key = YOUTUBE_API_KEYS[current_yt_key_index]
-            url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={','.join(batch)}&key={active_key}"
+            url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails,liveStreamingDetails&id={','.join(batch)}&key={active_key}"
 
             try:
                 res = requests.get(url, timeout=15)
@@ -375,6 +401,7 @@ def get_videos_details(video_ids):
                     for item in data.get("items", []):
                         st = item.get("statistics", {})
                         details[item["id"]] = {
+                            "finished": finished_youtube_video(item),
                             "views": int(st.get("viewCount", 0)),
                             "likes": int(st.get("likeCount", 0)),
                             "comments": int(st.get("commentCount", 0))
@@ -392,6 +419,12 @@ def get_videos_details(video_ids):
             except Exception:
                 time.sleep(1.5)
                 break
+
+        if not success:
+            raise RuntimeError("YouTube video status lookup failed; keeping last dashboard")
+
+    if len(details) < len(video_ids) * 0.9:
+        raise RuntimeError("YouTube returned fewer than 90% of requested videos; keeping last dashboard")
 
     return details
 
@@ -451,6 +484,7 @@ def record_and_prepare_data(video_items, yt_stats):
             "format": item["format"],
             "duration": item["duration"],
             "purpose": item["purpose"],
+            "purposes": item.get("purposes", [item["purpose"]]),
             "thumbnail": item["thumbnail"],
             "views": stats["views"],
             "likes": stats["likes"],
@@ -881,7 +915,7 @@ def generate_rich_dashboard(data):
             let filtered = rawVideos.filter(v => {
                 const title = (v.title || "").toLowerCase();
                 const chName = (v.channel_name || "");
-                const vPurpose = (v.purpose || "기타 수집");
+                const vPurposes = (Array.isArray(v.purposes) && v.purposes.length) ? v.purposes : [v.purpose || "기타 수집"];
                 const vFormat = (v.format || "");
                 const vBias = (v.political_bias || "미배치");
 
@@ -895,7 +929,7 @@ def generate_rich_dashboard(data):
                 if (excludeMajor && majorKeywords.some(m => chName.toUpperCase().includes(m))) return false;
                 if (burstOnly && (v.recent_growth_rate || 0) < 3000) return false;
                 
-                if (purpose !== "all" && vPurpose !== purpose) return false;
+                if (purpose !== "all" && !vPurposes.includes(purpose)) return false;
                 if (format !== "all" && !vFormat.includes(format)) return false;
                 if (hours !== "all" && (v.hours_elapsed || 0) > parseFloat(hours)) return false;
                 if (bias !== "all" && !vBias.includes(bias)) return false;
@@ -912,9 +946,10 @@ def generate_rich_dashboard(data):
             });
 
             const total = filtered.length;
-            const shortsMatCnt = filtered.filter(v => v.purpose === "쇼츠 소재").length;
-            const normalCnt = filtered.filter(v => v.purpose === "일반 수집대상").length;
-            const copyCnt = filtered.filter(v => v.purpose === "카피 벤치마킹").length;
+            const hasPurpose = (v, value) => ((Array.isArray(v.purposes) && v.purposes.length) ? v.purposes : [v.purpose]).includes(value);
+            const shortsMatCnt = filtered.filter(v => hasPurpose(v, "쇼츠 소재")).length;
+            const normalCnt = filtered.filter(v => hasPurpose(v, "일반 수집대상")).length;
+            const copyCnt = filtered.filter(v => hasPurpose(v, "카피 벤치마킹")).length;
             const longCnt = filtered.filter(v => v.format.includes("롱폼")).length;
             const shortCnt = filtered.filter(v => v.format.includes("쇼츠")).length;
 
@@ -1200,6 +1235,12 @@ def main():
 
     video_ids = [v["video_id"] for v in issue_videos]
     yt_stats = get_videos_details(video_ids)
+    held_live = sum(1 for stats in yt_stats.values() if not stats["finished"])
+    unavailable = len(set(video_ids)) - len(yt_stats)
+    issue_videos = [v for v in issue_videos if yt_stats.get(v["video_id"], {}).get("finished")]
+    print(f"📌 진행 중·예정 라이브/길이 미확정 {held_live}개, API 조회 불가 {unavailable}개 보류; 공개 대상 {len(issue_videos)}개")
+    if not issue_videos:
+        raise RuntimeError("No finished videos were verified; keeping last dashboard")
 
     processed_data = record_and_prepare_data(issue_videos, yt_stats)
     generate_rich_dashboard(processed_data)
