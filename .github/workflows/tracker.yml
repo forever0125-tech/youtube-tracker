@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: '17 * * * *'  # 정시 혼잡을 피해 매시간 17분 예약 (실행 지연 가능)
   workflow_dispatch:
+    inputs:
+      force:
+        description: '최근 수집 여부와 관계없이 강제로 수집'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -19,9 +24,13 @@ concurrency:
 jobs:
   track-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: 저장소 코드 가져오기
         uses: actions/checkout@v4
+        with:
+          # Read the newest snapshot after waiting for the shared concurrency lock.
+          ref: main
 
       - name: 파이썬 설치
         uses: actions/setup-python@v5
@@ -32,8 +41,20 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: 최근 수집 확인 · 중복 실행 방지
+        id: freshness
+        env:
+          FORCE_COLLECTION: ${{ inputs.force }}
+        run: |
+          if [ "$FORCE_COLLECTION" = "true" ]; then
+            python collection_gate.py --force
+          else
+            python collection_gate.py
+          fi
+
       - name: 트래커 스크립트 실행 (금고 키 주입)
         id: tracker
+        if: steps.freshness.outputs.collect == 'true'
         continue-on-error: true
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
@@ -64,14 +85,17 @@ jobs:
           fi
 
       - name: Pages 배포 설정
+        if: steps.freshness.outputs.collect == 'true'
         uses: actions/configure-pages@v4
 
       - name: index.html 웹 업로드 준비
+        if: steps.freshness.outputs.collect == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
 
       - name: GitHub Pages 웹 배포
+        if: steps.freshness.outputs.collect == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
 
