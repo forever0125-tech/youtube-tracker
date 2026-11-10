@@ -85,7 +85,13 @@
         .chip-channel:hover { background: #2563eb; color: #ffffff; border-color: #1d4ed8; }
 
         .chip-format { background: #fee2e2; color: #b91c1c; }
+        /* Match the Notion 정치성향 select colors, including future refreshes. */
         .chip-bias { background: #f1f5f9; color: #475569; }
+        .chip-bias.bias-neutral { background: #373736; color: #ffffff; }
+        .chip-bias.bias-left-cheong { background: #6e5482; color: #f3ebf9; }
+        .chip-bias.bias-left-myeong { background: #3f6f54; color: #e8f1ec; }
+        .chip-bias.bias-right { background: #984f49; color: #ffffff; }
+        .chip-bias.bias-left { background: #3b6591; color: #ffffff; }
 
         .surge-box {
             background: #fff1f2;
@@ -173,6 +179,7 @@
             <option value="우파">우파</option>
             <option value="좌파(친청)">좌파(친청)</option>
             <option value="중립">중립</option>
+            <option value="좌파">좌파</option>
             <option value="미배치">미배치</option>
         </select>
 
@@ -355,6 +362,17 @@
             });
         }
 
+        function politicalBiasClass(bias) {
+            switch ((bias || "").trim()) {
+                case "중립": return "bias-neutral";
+                case "좌파(친청)": return "bias-left-cheong";
+                case "좌파(친명)": return "bias-left-myeong";
+                case "우파": return "bias-right";
+                case "좌파": return "bias-left";
+                default: return "bias-unassigned";
+            }
+        }
+
         function renderCards() {
             const search = (document.getElementById("search-input").value || "").trim().toLowerCase();
             const excludeMajor = document.getElementById("exclude-major").checked;
@@ -482,7 +500,7 @@
                         <div class="meta-badges">
                             <span class="badge-chip chip-channel" style="${chActiveStyle}" onclick="toggleChannelFilter('${escapedChName}')" title="클릭 시 '${v.channel_name}' 채널 영상만 모아보기">📺 ${v.channel_name}</span>
                             <span class="badge-chip chip-format">${v.format}</span>
-                            <span class="badge-chip chip-bias">${v.political_bias}</span>
+                            <span class="badge-chip chip-bias ${politicalBiasClass(v.political_bias)}">${v.political_bias || "미배치"}</span>
                         </div>
 
                         ${surgeHtml}
