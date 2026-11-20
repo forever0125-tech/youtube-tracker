@@ -559,6 +559,10 @@ def generate_rich_dashboard(data):
         .header h1 { font-size: 24px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
         .header-meta { text-align: right; font-size: 13px; color: var(--text-sub); }
         .header-meta .live-time { font-size: 15px; font-weight: 700; color: var(--text-main); margin-bottom: 4px; }
+        .dashboard-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+        .dashboard-action { padding: 8px 12px; border: 1px solid #bfdbfe; border-radius: 6px; background: #fff; color: #1d4ed8; font: inherit; font-weight: 700; cursor: pointer; }
+        .dashboard-action.primary { background: #1d4ed8; color: #fff; }
+        .dashboard-action:disabled { opacity: .65; cursor: wait; }
 
         .notice-card { background: #fff; border: 1px solid var(--border-color); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; font-size: 13px; line-height: 1.6; color: var(--text-sub); display: flex; justify-content: space-between; }
         .notice-card strong { color: var(--text-main); }
@@ -593,12 +597,13 @@ def generate_rich_dashboard(data):
             background: #1d4ed8;
         }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 20px; }
         .card { background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column; transition: transform 0.2s, box-shadow 0.2s; position: relative; }
         .card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.06); }
         
-        .thumb-wrap { position: relative; width: 100%; padding-top: 56.25%; background: #000; overflow: hidden; }
+        .thumb-wrap { display: block; position: relative; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; overflow: hidden; cursor: zoom-in; }
         .thumb-wrap img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        .preview-badge { position: absolute; top: 8px; right: 8px; padding: 4px 8px; border-radius: 5px; background: #0f172ae6; color: #fff; font-size: 11px; font-weight: 700; }
         
         .rank-badge { position: absolute; top: 8px; left: 8px; padding: 4px 10px; font-size: 13px; font-weight: 800; border-radius: 6px; color: #fff; z-index: 2; }
         .rank-top { background: var(--badge-red); }
@@ -650,8 +655,29 @@ def generate_rich_dashboard(data):
         .sub-rate { font-size: 12px; font-weight: 600; color: #d946ef; }
         .engagement-line { display: flex; gap: 12px; font-size: 12px; color: var(--text-sub); }
 
-        .chart-box { width: 100%; height: 110px; margin-top: auto; border-top: 1px dashed var(--border-color); padding-top: 6px; }
+        .chart-box { position: relative; flex: none; width: 100%; height: 110px; margin-top: auto; border-top: 1px dashed var(--border-color); padding-top: 6px; }
         .measurement-note { font-size: 11px; color: #64748b; margin: 5px 0; line-height: 1.6; }
+
+        .thumbnail-preview { width: min(390px, calc(100% - 16px)); max-height: calc(100dvh - 16px); margin: auto; border: 1px solid var(--border-color); border-radius: 15px; color: var(--text-main); background: var(--card-bg); overflow: auto; box-shadow: 0 16px 55px #0f172a40; }
+        .thumbnail-preview [hidden] { display: none; }
+        .thumbnail-preview::backdrop { background: #0f172ab3; }
+        .preview-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; border-bottom: 1px solid var(--border-color); }
+        .preview-header h2 { font-size: 16px; }
+        .preview-body { padding: 12px; }
+        .preview-image { position: relative; aspect-ratio: 16 / 9; border-radius: 9px; overflow: hidden; background: #0f172a; }
+        .preview-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .preview-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin-top: 10px; font-size: 16px; font-weight: 700; line-height: 1.3; }
+        .preview-channel, .preview-message { margin-top: 5px; font-size: 12px; color: var(--text-sub); }
+        .preview-draft-label { display: block; margin: 16px 0 6px; font-size: 13px; font-weight: 700; }
+        .preview-draft-title { width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 6px; color: inherit; font: inherit; }
+        html:has(.thumbnail-preview[open]) { overflow: hidden; scrollbar-gutter: stable; }
+        @media (max-width: 600px) {
+            body { padding: 12px; }
+            .header, .notice-card { flex-direction: column; gap: 12px; }
+            .header-meta, .stats-summary { text-align: left; }
+            .dashboard-actions { justify-content: flex-start; }
+            .thumbnail-preview { width: calc(100% - 16px); }
+        }
     </style>
 </head>
 <body>
@@ -662,6 +688,11 @@ def generate_rich_dashboard(data):
             <div class="live-time" id="live-clock">현재 시간: 계산 중...</div>
             <div id="update-status">최근 실제 수집: __MEASUREMENT_STR__ (KST)</div>
             <div class="measurement-note">페이지 생성: __LAST_UPDATE_STR__ (KST) · 매시간 17분 수집 예약</div>
+            <div class="dashboard-actions">
+                <button type="button" class="dashboard-action primary" id="load-latest">최신 데이터 불러오기</button>
+                <button type="button" class="dashboard-action" id="choose-thumbnail">내 썸네일 미리보기</button>
+                <input type="file" id="thumbnail-file" accept="image/*" hidden>
+            </div>
         </div>
     </div>
 
@@ -732,6 +763,26 @@ def generate_rich_dashboard(data):
 
     <div class="grid" id="cards-container"></div>
 
+    <dialog class="thumbnail-preview" id="thumbnail-preview" aria-labelledby="preview-heading">
+        <div class="preview-header">
+            <h2 id="preview-heading">모바일 썸네일 미리보기</h2>
+            <form method="dialog"><button class="dashboard-action">닫기</button></form>
+        </div>
+        <div class="preview-body">
+            <div class="preview-image">
+                <img id="preview-thumbnail" alt="모바일 크기 썸네일">
+                <span id="preview-duration" class="duration-badge" hidden></span>
+            </div>
+            <p id="preview-title" class="preview-title" hidden></p>
+            <p id="preview-channel" class="preview-channel" hidden></p>
+            <p id="preview-message" class="preview-message" role="status" hidden></p>
+            <div id="preview-draft" hidden>
+                <label for="preview-draft-title" class="preview-draft-label">영상 제목 (선택)</label>
+                <input type="text" id="preview-draft-title" class="preview-draft-title">
+            </div>
+        </div>
+    </dialog>
+
     <script>
         const rawVideos = __RAW_VIDEOS__;
         const lastUpdateTs = __LAST_UPDATE_TS__;
@@ -739,6 +790,58 @@ def generate_rich_dashboard(data):
         const majorKeywords = ["MBC", "JTBC", "SBS", "KBS", "YTN", "채널A", "MBN", "연합뉴스", "TV조선", "조선일보", "동아일보", "중앙일보"];
         let activeKeyword = "";
         let activeChannel = "";
+
+        const previewDialog = document.getElementById("thumbnail-preview");
+        const previewImage = document.getElementById("preview-thumbnail");
+        const previewMessage = document.getElementById("preview-message");
+        const draftTitle = document.getElementById("preview-draft-title");
+        const thumbnailFile = document.getElementById("thumbnail-file");
+        let localThumbnailUrl = "";
+
+        function setPreviewText(id, value) {
+            const element = document.getElementById(id);
+            element.textContent = value || "";
+            element.hidden = !value;
+        }
+
+        function showPreviewError() {
+            previewMessage.textContent = "이미지를 열 수 없습니다.";
+            previewMessage.hidden = false;
+        }
+
+        function openThumbnailPreview(source, video) {
+            document.getElementById("preview-draft").hidden = Boolean(video);
+            draftTitle.value = "";
+            setPreviewText("preview-title", video?.title);
+            setPreviewText("preview-channel", video?.channel_name);
+            setPreviewText("preview-duration", video?.duration);
+            previewMessage.hidden = true;
+            previewImage.onerror = video ? () => {
+                previewImage.onerror = showPreviewError;
+                previewImage.src = `https://i.ytimg.com/vi/${video.video_id}/hqdefault.jpg`;
+            } : showPreviewError;
+            previewImage.src = source;
+            previewDialog.showModal();
+        }
+
+        document.getElementById("choose-thumbnail").addEventListener("click", () => thumbnailFile.click());
+        thumbnailFile.addEventListener("change", () => {
+            const file = thumbnailFile.files[0];
+            if (!file) return;
+            localThumbnailUrl = URL.createObjectURL(file);
+            openThumbnailPreview(localThumbnailUrl);
+            thumbnailFile.value = "";
+        });
+        draftTitle.addEventListener("input", () => setPreviewText("preview-title", draftTitle.value));
+        previewDialog.addEventListener("click", event => {
+            if (event.target === previewDialog) previewDialog.close();
+        });
+        previewDialog.addEventListener("close", () => {
+            previewImage.onerror = null;
+            previewImage.removeAttribute("src");
+            if (localThumbnailUrl) URL.revokeObjectURL(localThumbnailUrl);
+            localThumbnailUrl = "";
+        });
 
         const trackerShorts = new Map();
         let trackerShortsConnected = false;
@@ -986,6 +1089,9 @@ def generate_rich_dashboard(data):
             updateKeywordTags(filtered);
 
             const container = document.getElementById("cards-container");
+            chartObserver.disconnect();
+            for (const chart of renderedCharts.values()) chart.destroy();
+            renderedCharts.clear();
             container.innerHTML = "";
 
             if (filtered.length === 0) {
@@ -999,7 +1105,6 @@ def generate_rich_dashboard(data):
                 const v = filtered[index];
                 const rank = index + 1;
                 const badgeClass = rank <= 3 ? "rank-top" : "rank-normal";
-                const chartId = "chart-" + v.video_id;
 
                 const safeTitle = (v.title || "").replace(/"/g, '&quot;');
                 const escapedChName = (v.channel_name || "").replace(/'/g, "\\'");
@@ -1021,11 +1126,12 @@ def generate_rich_dashboard(data):
                 const card = document.createElement("div");
                 card.className = "card";
                 card.innerHTML = `
-                    <div class="thumb-wrap">
+                    <button type="button" class="thumb-wrap" aria-label="모바일 썸네일 미리보기">
                         <span class="rank-badge ${badgeClass}">${rank}위</span>
-                        <img src="${v.thumbnail}" alt="썸네일" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${v.video_id}/hqdefault.jpg'">
+                        <img src="${v.thumbnail}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='https://i.ytimg.com/vi/${v.video_id}/hqdefault.jpg'">
+                        <span class="preview-badge">모바일 미리보기</span>
                         <span class="duration-badge">${v.duration || v.format}</span>
-                    </div>
+                    </button>
                     <div class="card-body">
                         <a href="https://youtu.be/${v.video_id}" target="_blank" class="card-title" title="${safeTitle}">${v.title}</a>
                         <div class="card-actions"><button type="button" class="copy-youtube-link" aria-label="유튜브 링크 복사">🔗 유튜브 링크 복사</button><button type="button" class="register-shorts">쇼츠분석</button></div>
@@ -1059,7 +1165,7 @@ def generate_rich_dashboard(data):
                             ${(v.chart_data || []).length >= 2 ? `실측 ${(v.chart_data || []).length}회 · 최근 간격 ${measuredGap(((v.chart_data.at(-1).ts - v.chart_data.at(-2).ts) / 60000))}` : '실측 1회 이하 · 다음 측정 후 추이 표시'}
                         </div>
                         <div class="chart-box">
-                            <canvas id="${chartId}"></canvas>
+                            <canvas></canvas>
                         </div>
                     </div>
                 `;
@@ -1070,6 +1176,10 @@ def generate_rich_dashboard(data):
                 shortsStatus.setAttribute('aria-live','polite');
                 card.querySelector('.card-actions').after(shortsStatus);
                 container.appendChild(card);
+                card.querySelector(".thumb-wrap").addEventListener("click", () => openThumbnailPreview(v.thumbnail, v));
+                const canvas = card.querySelector("canvas");
+                chartVideos.set(canvas, v);
+                chartObserver.observe(canvas);
                 updateTrackerShortsBadge(card, v.video_id);
                 card.querySelector(".register-shorts").addEventListener("click", () => {
                     const target = new URL("http://127.0.0.1:8910/");
@@ -1104,89 +1214,97 @@ def generate_rich_dashboard(data):
                     setTimeout(() => { if (button.isConnected) button.textContent = "🔗 유튜브 링크 복사"; }, 2000);
                 });
 
-                setTimeout(() => {
-                    const ctx = document.getElementById(chartId);
-                    if (!ctx) return;
-                    const cData = (v.chart_data || []).slice(-12);
-                    const values = cData.map(c => ({x: c.ts, y: c.v}));
-
-                    new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            datasets: [{
-                                data: values,
-                                borderColor: '#ef4444',
-                                backgroundColor: 'transparent',
-                                borderWidth: 2,
-                                pointBackgroundColor: '#ef4444',
-                                pointRadius: 3.5,
-                                fill: false,
-                                tension: 0
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: { 
-                                legend: { display: false }, 
-                                tooltip: { 
-                                    enabled: true,
-                                    callbacks: {
-                                        title: function(items) {
-                                            return items.length ? measuredTime(items[0].parsed.x, true) : '';
-                                        },
-                                        label: function(context) {
-                                            return context.parsed.y.toLocaleString() + '회';
-                                        }
-                                    }
-                                } 
-                            },
-                            scales: {
-                                x: { 
-                                    type: 'linear',
-                                    min: cData[0]?.ts,
-                                    max: cData.at(-1)?.ts,
-                                    afterBuildTicks: function(axis) {
-                                        const indices = [...new Set([0, Math.round((cData.length-1)/3), Math.round(2*(cData.length-1)/3), cData.length-1])];
-                                        axis.ticks = indices.filter(i => cData[i]).map(i => ({value: cData[i].ts}));
-                                    },
-                                    grid: { display: false }, 
-                                    ticks: {
-                                        font: { size: 10 },
-                                        color: '#64748b',
-                                        maxRotation: 0,
-                                        callback: val => relativeChartTime(val, cData.at(-1)?.ts || val)
-                                    }
-                                },
-                                y: {
-                                    position: 'right',
-                                    grid: { color: '#f1f5f9' },
-                                    ticks: {
-                                        font: { size: 9 },
-                                        color: '#64748b',
-                                        maxTicksLimit: 5,
-                                        callback: function(val) {
-                                            if (val >= 10000) {
-                                                const man = val / 10000;
-                                                return (man % 1 === 0) ? man + '만' : man.toFixed(1) + '만';
-                                            }
-                                            return val.toLocaleString();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }, 0);
             }
         }
 
-        startLiveClock();
-        renderCards();
-        connectTrackerShorts();
+        const chartVideos = new WeakMap();
+        const renderedCharts = new Map();
+        const chartObserver = new IntersectionObserver(entries => {
+            for (const {target, isIntersecting} of entries) {
+                if (!isIntersecting || !target.isConnected || renderedCharts.has(target)) continue;
+                chartObserver.unobserve(target);
+                if (typeof Chart !== "undefined")
+                    renderedCharts.set(target, drawVideoChart(target, chartVideos.get(target)));
+            }
+        });
+
+        function drawVideoChart(canvas, v) {
+            const cData = (v.chart_data || []).slice(-12);
+            const values = cData.map(c => ({x: c.ts, y: c.v}));
+
+            return new Chart(canvas, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        data: values,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#ef4444',
+                        pointRadius: 3.5,
+                        fill: false,
+                        tension: 0
+                    }]
+                },
+                options: {
+                    animation: false,
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            enabled: true,
+                            callbacks: {
+                                title: function(items) {
+                                    return items.length ? measuredTime(items[0].parsed.x, true) : '';
+                                },
+                                label: function(context) {
+                                    return context.parsed.y.toLocaleString() + '회';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: cData[0]?.ts,
+                            max: cData.at(-1)?.ts,
+                            afterBuildTicks: function(axis) {
+                                const indices = [...new Set([0, Math.round((cData.length-1)/3), Math.round(2*(cData.length-1)/3), cData.length-1])];
+                                axis.ticks = indices.filter(i => cData[i]).map(i => ({value: cData[i].ts}));
+                            },
+                            grid: { display: false },
+                            ticks: {
+                                font: { size: 10 },
+                                color: '#64748b',
+                                maxRotation: 0,
+                                callback: val => relativeChartTime(val, cData.at(-1)?.ts || val)
+                            }
+                        },
+                        y: {
+                            position: 'right',
+                            grid: { color: '#f1f5f9' },
+                            ticks: {
+                                font: { size: 9 },
+                                color: '#64748b',
+                                maxTicksLimit: 5,
+                                callback: function(val) {
+                                    if (val >= 10000) {
+                                        const man = val / 10000;
+                                        return (man % 1 === 0) ? man + '만' : man.toFixed(1) + '만';
+                                    }
+                                    return val.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         const trackerViewKey = 'youtube-tracker:view:v1';
         const trackerViewControls = ['search-input','exclude-major','burst-only','filter-purpose','filter-format','filter-hours','filter-bias','sort-order'];
+        history.scrollRestoration = "manual";
         function saveTrackerView() {
             try {
                 const controls = {};
@@ -1209,21 +1327,25 @@ def generate_rich_dashboard(data):
                 }
                 activeKeyword = state.activeKeyword || '';
                 activeChannel = state.activeChannel || '';
-                renderCards();
-                requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, Number(state.scrollY) || 0)));
+                return Number(state.scrollY) || 0;
             } catch (_) {}
         }
-        restoreTrackerView();
+        const savedScroll = restoreTrackerView();
+        startLiveClock();
+        renderCards();
+        connectTrackerShorts();
+        if (savedScroll) requestAnimationFrame(() => window.scrollTo(0, savedScroll));
         document.addEventListener('input', saveTrackerView);
         document.addEventListener('change', saveTrackerView);
         document.addEventListener('click', () => setTimeout(saveTrackerView, 0));
         window.addEventListener('pagehide', saveTrackerView);
         window.addEventListener('beforeunload', saveTrackerView);
 
-        setInterval(function() {
+        document.getElementById("load-latest").addEventListener("click", event => {
             saveTrackerView();
+            event.currentTarget.disabled = true;
             window.location.reload();
-        }, 600000);
+        });
     </script>
 </body>
 </html>"""
