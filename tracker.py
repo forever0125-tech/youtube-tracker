@@ -603,7 +603,6 @@ def generate_rich_dashboard(data):
         
         .thumb-wrap { display: block; position: relative; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; overflow: hidden; cursor: zoom-in; }
         .thumb-wrap img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        .preview-badge { position: absolute; top: 8px; right: 8px; padding: 4px 8px; border-radius: 5px; background: #0f172ae6; color: #fff; font-size: 11px; font-weight: 700; }
         
         .rank-badge { position: absolute; top: 8px; left: 8px; padding: 4px 10px; font-size: 13px; font-weight: 800; border-radius: 6px; color: #fff; z-index: 2; }
         .rank-top { background: var(--badge-red); }
@@ -1129,7 +1128,6 @@ def generate_rich_dashboard(data):
                     <button type="button" class="thumb-wrap" aria-label="모바일 썸네일 미리보기">
                         <span class="rank-badge ${badgeClass}">${rank}위</span>
                         <img src="${v.thumbnail}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='https://i.ytimg.com/vi/${v.video_id}/hqdefault.jpg'">
-                        <span class="preview-badge">모바일 미리보기</span>
                         <span class="duration-badge">${v.duration || v.format}</span>
                     </button>
                     <div class="card-body">
